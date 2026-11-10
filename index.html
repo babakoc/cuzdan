@@ -717,8 +717,8 @@ async function importMM(file) {
   const accounts = rows('select ZUID, ZNICNAME, ZGROUPUID, ZISDEL, ZCARDASSETUID, ZORDER from ZASSET').map(a => {
     const id = 'mm-' + a.ZUID, type = groupType(String(a.ZGROUPUID), groups.get(String(a.ZGROUPUID)));
     return {id, name:String(a.ZNICNAME || 'Hesap').trim(), type, parentId:a.ZCARDASSETUID ? 'mm-' + a.ZCARDASSETUID : null,
-      opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), // MM: 0 = active, 1 = deleted by the user (MM hides it but its transactions still count), other = hidden
-      deleted:+a.ZISDEL === 1, hidden:(+a.ZISDEL || 0) > 1, order:a.ZORDER ?? 0};
+      opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), // MM: 0 = active; any other value = deleted by the user (MM no longer shows it, but its transactions still count)
+      deleted:(+a.ZISDEL || 0) !== 0, hidden:false, order:a.ZORDER ?? 0};
 
   });
   const accIds = new Set(accounts.map(a => a.id));
