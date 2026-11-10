@@ -82,6 +82,11 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .custom-emoji{display:flex;gap:8px;margin-bottom:18px}
 .custom-emoji input{flex:1;min-width:0;height:44px;border-radius:12px;border:0;background:var(--card);padding:0 12px;outline:none}
 .custom-emoji button{padding:0 16px;border-radius:12px;background:var(--chip);font-weight:650}
+.crop-wrap{display:flex;justify-content:center;margin:6px 0 14px}
+.crop-frame{position:relative;overflow:hidden;border-radius:30%;background:var(--chip);touch-action:none;cursor:grab;box-shadow:0 0 0 2px var(--accent)}
+.crop-frame img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-select:none;pointer-events:none}
+.crop-zoom{display:flex;align-items:center;gap:12px;padding:0 12px;color:var(--muted);font-weight:700}
+.crop-zoom input{flex:1;accent-color:var(--accent)}
 .sub-label.between{display:flex;justify-content:space-between;align-items:center}
 .sub-label button{color:var(--accent);font-weight:600;text-transform:none;letter-spacing:0;font-size:14px}
 
@@ -296,20 +301,75 @@ function ico(v, cls = '') {
   return esc(v || '•');
 }
 const firstGrapheme = s => window.Intl?.Segmenter ? [...new Intl.Segmenter('tr', {granularity:'grapheme'}).segment(s)][0]?.segment || '' : [...s][0] || '';
-// crops the centre square and scales it down, so a phone photo becomes a few-KB icon
-function resizeImage(file, size) {
+function loadImage(file) {
   return new Promise((res, rej) => {
     const img = new Image(), u = URL.createObjectURL(file);
-    img.onload = () => {
-      const s = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement('canvas');
-      c.width = c.height = size;
-      const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
-      g.drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
-      URL.revokeObjectURL(u); res(c.toDataURL('image/png'));
-    };
+    img.onload = () => res({img, url:u});
     img.onerror = () => { URL.revokeObjectURL(u); rej(new Error('Görsel okunamadı')); };
     img.src = u;
   });
+}
+/* ---------- crop: the user pans and zooms the picture inside a square frame ----------
+   s = pixels on screen per image pixel; (tx, ty) = image's top-left inside the frame.
+   The image always covers the frame, so the exported square never has empty corners. */
+const CROP_F = 264, CROP_OUT = 128, CROP_MAXZ = 5;
+const cropBase = c => Math.max(CROP_F / c.w, CROP_F / c.h);
+function cropClamp(c) {
+  const s = cropBase(c) * c.z;
+  c.tx = Math.min(0, Math.max(CROP_F - c.w * s, c.tx));
+  c.ty = Math.min(0, Math.max(CROP_F - c.h * s, c.ty));
+}
+function cropZoomTo(c, z, px = CROP_F / 2, py = CROP_F / 2) { // zoom keeping the point (px, py) of the frame fixed
+  const s0 = cropBase(c) * c.z;
+  c.z = Math.min(CROP_MAXZ, Math.max(1, z));
+  const s1 = cropBase(c) * c.z;
+  c.tx = px - (px - c.tx) * s1 / s0; c.ty = py - (py - c.ty) * s1 / s0;
+  cropClamp(c);
+}
+function cropPaint() {
+  const c = sheetState?.crop, im = $('#crop-img'); if (!c || !im) return;
+  const s = cropBase(c) * c.z;
+  im.style.width = c.w * s + 'px'; im.style.height = c.h * s + 'px';
+  im.style.transform = `translate(${c.tx}px, ${c.ty}px)`;
+  const z = $('#crop-zoom'); if (z && +z.value !== c.z) z.value = c.z;
+}
+function cropExport(c) {
+  const s = cropBase(c) * c.z, cv = document.createElement('canvas');
+  cv.width = cv.height = CROP_OUT;
+  const g = cv.getContext('2d'); g.imageSmoothingQuality = 'high';
+  g.drawImage(c.img, -c.tx / s, -c.ty / s, CROP_F / s, CROP_F / s, 0, 0, CROP_OUT, CROP_OUT);
+  return cv.toDataURL('image/png');
+}
+function drawCropper() {
+  const c = sheetState.crop;
+  openSheet(`
+    <div class="sheet-head"><button data-action="crop-cancel">Vazgeç</button><h2>Alanı seç</h2><button data-action="crop-use" style="font-weight:700">Kullan</button></div>
+    <div class="crop-wrap"><div id="crop-frame" class="crop-frame" style="width:${CROP_F}px;height:${CROP_F}px"><img id="crop-img" src="${c.url}" alt="" draggable="false"></div></div>
+    <div class="crop-zoom"><span>−</span><input id="crop-zoom" type="range" min="1" max="${CROP_MAXZ}" step="0.01" value="${c.z}"><span>＋</span></div>
+    <p class="note" style="text-align:center">Görseli sürükleyerek kaydır, iki parmakla ya da kaydırıcıyla yakınlaştır.</p>`);
+  cropPaint();
+  const fr = $('#crop-frame'), pts = new Map();
+  let last = null; // previous gesture state: {x, y, d}
+  const gesture = () => {
+    const p = [...pts.values()], r = fr.getBoundingClientRect();
+    const x = p.reduce((a, q) => a + q.x, 0) / p.length - r.left, y = p.reduce((a, q) => a + q.y, 0) / p.length - r.top;
+    return {x, y, d:p.length > 1 ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0, n:p.length};
+  };
+  fr.addEventListener('pointerdown', e => { try { fr.setPointerCapture(e.pointerId); } catch {} pts.set(e.pointerId, {x:e.clientX, y:e.clientY}); last = gesture(); });
+  fr.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    const g = gesture();
+    if (last && last.n === g.n) {
+      c.tx += g.x - last.x; c.ty += g.y - last.y; cropClamp(c);
+      if (g.n > 1 && last.d) cropZoomTo(c, c.z * g.d / last.d, g.x, g.y);
+      cropPaint();
+    }
+    last = g;
+  });
+  const up = e => { pts.delete(e.pointerId); last = pts.size ? gesture() : null; };
+  fr.addEventListener('pointerup', up); fr.addEventListener('pointercancel', up);
+  fr.addEventListener('wheel', e => { e.preventDefault(); const r = fr.getBoundingClientRect(); cropZoomTo(c, c.z * (e.deltaY < 0 ? 1.08 : 1 / 1.08), e.clientX - r.left, e.clientY - r.top); cropPaint(); }, {passive:false});
 }
 let S = emptyState();
 let saveTimer;
@@ -753,12 +813,13 @@ function iconCtx() {
   return {cur:d.icon || '', def:d.type === 'transfer' ? '⇄' : (c?.emoji || tc?.emoji || '•'), set:v => { d.icon = v || null; }, redraw:drawTxSheet};
 }
 function drawIconPicker() {
+  if (sheetState.crop) return drawCropper();
   const d = sheetState, ctx = iconCtx(), mine = Object.keys(S.icons || {});
   const tile = v => `<button class="ico-tile ${ctx.cur === v ? 'on' : ''}" data-action="icon-pick" data-v="${esc(v)}">${ico(v)}</button>`;
   openSheet(`
     <div class="sheet-head"><button data-action="icon-cancel">Geri</button><h2>Simge seç</h2><span style="width:44px"></span></div>
     ${ctx.def !== null ? `<div class="list" style="margin-bottom:16px"><button class="row" data-action="icon-pick" data-v=""><div class="ic" style="background:var(--chip)">${ico(ctx.def)}</div><div class="t"><b>${ctx.defLabel || 'Kategorinin simgesi'}</b><small>Varsayılanı kullan</small></div>${!ctx.cur ? '<b style="color:var(--accent)">✓</b>' : ''}</button></div>` : ''}
-    <div class="sub-label between"><span>Yüklediklerim</span>${mine.length ? `<button data-action="icon-manage">${d.iconManage ? 'Bitti' : 'Düzenle'}</button>` : ''}</div>
+    <div class="sub-label between"><span>Yüklediklerim</span>${mine.length ? `<button data-action="icon-manage">${d.iconManage ? 'Bitti' : 'Kaldır'}</button>` : ''}</div>
     <div class="ico-grid"><button class="ico-tile add" data-action="icon-upload" aria-label="Görsel yükle">＋</button>${mine.map(id => d.iconManage
       ? `<button class="ico-tile del" data-action="icon-del" data-id="${id}">${ico('img:' + id)}<i>✕</i></button>` : tile('img:' + id)).join('')}</div>
     <div class="custom-emoji"><input id="emoji-in" placeholder="Ya da bir emoji yaz" autocomplete="off"><button data-action="icon-custom">Kullan</button></div>
@@ -870,6 +931,13 @@ const A = {
     const v = firstGrapheme(($('#emoji-in')?.value || '').trim());
     if (!v || /^[\p{L}\p{N}]$/u.test(v)) return toast('Bir emoji yaz');
     const c = iconCtx(); c.set(v); sheetState.picking = false; c.redraw();
+  },
+  'crop-cancel'() { URL.revokeObjectURL(sheetState.crop.url); delete sheetState.crop; drawIconPicker(); },
+  'crop-use'() {
+    const c = sheetState.crop, url = cropExport(c), id = uid();
+    URL.revokeObjectURL(c.url); delete sheetState.crop;
+    S.icons = S.icons || {}; S.icons[id] = url; save();
+    const k = iconCtx(); k.set('img:' + id); sheetState.picking = false; k.redraw(); toast('Simge eklendi');
   },
   'icon-upload'() { $('#file-icon').click(); },
   'icon-manage'() { sheetState.iconManage = !sheetState.iconManage; drawIconPicker(); },
@@ -990,6 +1058,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.id === 'crop-zoom' && sheetState?.crop) { cropZoomTo(sheetState.crop, +el.value); cropPaint(); return; }
   if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q ? '' : monthSwitch(); renderTxList(); return; }
   if (!sheetState) return;
   if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
@@ -1021,9 +1090,10 @@ async function exportJSON() {
 $('#file-icon').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f || !sheetState) return;
   try {
-    const url = await resizeImage(f, 128), id = uid();
-    S.icons = S.icons || {}; S.icons[id] = url; save();
-    const c = iconCtx(); c.set('img:' + id); sheetState.picking = false; c.redraw(); toast('Simge eklendi');
+    const {img, url} = await loadImage(f);
+    const c = {img, url, w:img.naturalWidth, h:img.naturalHeight, z:1, tx:0, ty:0};
+    const s0 = cropBase(c); c.tx = (CROP_F - c.w * s0) / 2; c.ty = (CROP_F - c.h * s0) / 2; // start centred
+    sheetState.crop = c; drawCropper();
   } catch (err) { toast(err.message); }
 });
 $('#file-json').addEventListener('change', async e => {
