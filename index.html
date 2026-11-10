@@ -298,13 +298,14 @@ function balAt(id, date) {
   }
   return v;
 }
-// Statement = card debt on the last closing day. Whatever was paid in since then is deducted;
-// the rest is due on the due day. Spending after the closing day goes to the next statement.
+// statementDay = last day included in a statement (the cut happens at 23:59 that day; 31 = month end).
+// Statement = card debt at the end of that day. Payments made since are deducted, the rest is due
+// on the due day. Spending after the cut goes to the next statement.
 function cardCycle(a) {
   const sd = +a.statementDay, pd = +a.dueDay;
   if (a.type !== 'card' || !sd || !pd) return null;
   const t = D.today, [y, m] = t.split('-').map(Number);
-  let close = mkDate(y, m, sd); if (close > t) close = mkDate(y, m - 1, sd);
+  let close = mkDate(y, m, sd); if (close >= t) close = mkDate(y, m - 1, sd); // today's cut hasn't happened yet
   const [cy, cm] = close.split('-').map(Number);
   const due = pd > sd ? mkDate(cy, cm, pd) : mkDate(cy, cm + 1, pd);
   const nextClose = mkDate(cy, cm + 1, sd);
@@ -739,11 +740,12 @@ function drawAccSheet() {
       <div class="field"><label>Tür</label><select data-f="type" data-redraw="1">${Object.entries(ACC_TYPES).map(([k, l]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${l.replace(/ları$|leri$|lar$|ler$/, '')}</option>`).join('')}</select></div>
       ${d.type === 'card' ? `<div class="field"><label>Bağlı banka</label><select data-f="parentId"><option value="">Yok</option>${accOptions(d.parentId, x => x.type === 'bank')}</select></div>
       <div class="field"><label>Limit</label><input data-f="limitStr" inputmode="decimal" value="${d.limit ? String(d.limit).replace('.', ',') : ''}" placeholder="İsteğe bağlı"></div>
-      <div class="field"><label>Kesim günü</label><input data-f="statementDay" inputmode="numeric" value="${d.statementDay || ''}" placeholder="Ayın kaçı, örn. 29"></div>
+      <div class="field"><label>Kesim günü</label><input data-f="statementDay" inputmode="numeric" value="${d.statementDay || ''}" placeholder="Ekstreye giren son gün"></div>
       <div class="field"><label>Son ödeme</label><input data-f="dueDay" inputmode="numeric" value="${d.dueDay || ''}" placeholder="Ayın kaçı, örn. 7"></div>` : ''}
       <div class="field"><label>${debt ? 'Açılış borcu' : 'Açılış bakiyesi'}</label><input data-f="openingStr" inputmode="decimal" value="${esc(d.openingStr)}" placeholder="0"></div>
       <div class="field"><label>Gizle</label><span style="flex:1;text-align:right;color:var(--muted);font-size:14px">Toplamlara dahil etme</span><input type="checkbox" data-f="hidden" ${d.hidden ? 'checked' : ''}></div>
     </div>
+    ${d.type === 'card' ? '<p class="note" style="margin:-6px 6px 14px">Kesim günü ekstreye giren son gündür; kesim o gün 23:59\'da yapılır. Ay sonu için 31 yaz.</p>' : ''}
     <div class="form"><div class="swatches">${PALETTE.map(c => `<button style="background:${c}" class="${d.color === c ? 'on' : ''}" data-action="pick-color" data-c="${c}" aria-label="Renk"></button>`).join('')}</div></div>
     ${d.isNew ? '' : `<button class="secondary danger" data-action="del-acc">${used ? 'Hesabı sil (işlemleri de silinir)' : 'Hesabı sil'}</button>`}
   `);
@@ -937,6 +939,7 @@ function groupType(uid, name) {
   if (n.includes('yatırım')) return 'invest'; if (n.includes('elektronik')) return 'ewallet'; if (n.includes('sigorta')) return 'insurance';
   return 'other';
 }
+const mmCutDay = v => { const n = parseInt(v, 10); return !n ? null : n === 1 ? 31 : n - 1; }; // MM period start -> last day included
 async function importMM(file) {
   const SQL = await loadSql();
   const db = new SQL.Database(new Uint8Array(await file.arrayBuffer()));
@@ -950,8 +953,8 @@ async function importMM(file) {
     return {id, name:String(a.ZNICNAME || 'Hesap').trim(), type, parentId:a.ZCARDASSETUID ? 'mm-' + a.ZCARDASSETUID : null,
       opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), // MM: 0 = active; any other value = deleted by the user (MM no longer shows it, but its transactions still count)
       deleted:(+a.ZISDEL || 0) !== 0, hidden:false, order:a.ZORDER ?? 0,
-      // MM: ZCARD_DAYFIN = statement (kesim) day, ZCARD_DAYPAY = payment due day
-      statementDay:type === 'card' ? (parseInt(a.ZCARD_DAYFIN, 10) || null) : null, dueDay:type === 'card' ? (parseInt(a.ZCARD_DAYPAY, 10) || null) : null};
+      // MM: ZCARD_DAYFIN = first day of the new period (cut is the day before, 23:59), ZCARD_DAYPAY = due day
+      statementDay:type === 'card' ? mmCutDay(a.ZCARD_DAYFIN) : null, dueDay:type === 'card' ? (parseInt(a.ZCARD_DAYPAY, 10) || null) : null};
 
   });
   const accIds = new Set(accounts.map(a => a.id));
@@ -1007,6 +1010,11 @@ $('#file-mm').addEventListener('change', async e => {
 /* ---------- boot ---------- */
 (async () => {
   try { const st = await DB.get('state'); if (st) S = {...emptyState(), ...st}; } catch (e) { toast('Veritabanı açılamadı'); }
+  // one-time fix: the first release stored Money Manager's "new period starts" day as the cut day
+  if (!S.meta.cutDayFix) {
+    for (const a of S.accounts) if (a.type === 'card' && a.statementDay && String(a.id).startsWith('mm-')) a.statementDay = mmCutDay(a.statementDay);
+    S.meta.cutDayFix = true; if (S.accounts.length) save();
+  }
   const n = runRecurring();
   render();
   if (n) toast(`${n} tekrarlayan işlem eklendi`);
