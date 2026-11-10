@@ -127,6 +127,23 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .cat-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:-2px 0 12px}
 .cat-meta span{font-size:11px;color:var(--muted);font-weight:600}
 .cat-meta b{display:block;font-size:15px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mrows{display:flex;flex-direction:column;gap:4px}
+.mrow{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:10px;padding:7px 6px;border-radius:12px;text-align:left;width:100%}
+.mrow.cur{background:var(--chip)}
+.mrow .ml{font-weight:700;font-size:14px;line-height:1.1}
+.mrow .ml small{display:block;font-size:10px;color:var(--muted);font-weight:600}
+.mrow .mb{display:flex;flex-direction:column;gap:3px;min-width:0}
+.mrow .mb>span{display:flex;align-items:center;gap:6px;min-width:0}
+.mrow .mb i{display:block;height:8px;border-radius:4px;max-width:58%;min-width:2px;flex:0 0 auto}
+.mrow .mb i.g{background:var(--pos)} .mrow .mb i.e{background:var(--neg)}
+.mrow .mb em{font-style:normal;font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap}
+.mrow .mn{font-weight:700;font-size:13px;text-align:right;white-space:nowrap}
+.mrow .mn small{display:block;font-size:10px;color:var(--muted);font-weight:600}
+.row.upcoming{opacity:.78}
+.row.upcoming .ic{outline:1.5px dashed currentColor;outline-offset:-1.5px}
+.badge.soon{background:rgba(76,91,255,.15);color:var(--accent)}
+.badge.late{background:rgba(229,72,77,.15);color:var(--neg)}
+.tx-date{color:var(--text);font-weight:600;opacity:.8}
 .bar-legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
 .bar-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
 
@@ -267,6 +284,7 @@ const mkDate = (y, m, d) => { while (m < 1) { m += 12; y--; } while (m > 12) { m
 const addDays = (s, n) => { const d = parseD(s); d.setDate(d.getDate() + n); return ymd(d); };
 const shortDate = s => parseD(s).toLocaleDateString('tr-TR', {day:'numeric', month:'short'});
 const daysUntil = s => Math.round((parseD(s) - parseD(todayStr())) / 864e5);
+const shortRel = s => { const n = daysUntil(s); return n === 0 ? 'Bugün' : n === -1 ? 'Dün' : n === 1 ? 'Yarın' : shortDate(s); };
 const relDay = s => { const n = daysUntil(s); if (n === 0) return 'Bugün'; if (n === 1) return 'Yarın'; if (n < 0) return `${-n} gün gecikti`; if (n < 7) return `${n} gün sonra`; return shortDate(s); };
 const dayLabel = s => {
   const t = todayStr(), y = new Date(); y.setDate(y.getDate() - 1);
@@ -499,31 +517,40 @@ function ruleLook(r) {
     title:r.note || (isT ? 'Transfer' : c?.name || 'Kategorisiz'),
     acc:isT ? `${accName(r.accountId)} → ${accName(r.toAccountId)}` : accName(r.accountId)};
 }
-function upcoming(days) {
-  const t = todayStr(), lim = addDays(t, days), out = [];
-  for (const l of S.loans || []) for (const r of loanState(l).rows) if (!r.paid && r.date <= lim)
-    out.push({date:r.date, action:`data-action="open-loan" data-id="${l.id}"`, icon:l.icon || '🏦', color:LINKS.loan.color, title:`${l.name} ${r.i + 1}/${l.count}. taksit`, sub:l.auto ? 'Otomatik ödeme' : 'Kredi taksiti', amount:-r.amount});
-  for (const a of S.accounts) {
-    if (a.type !== 'card' || a.deleted) continue;
-    const c = cardCycle(a);
-    if (c && c.dueNow > 0.004) out.push({date:c.due, action:`data-action="open-acc" data-id="${a.id}"`, icon:a.icon || '💳', color:a.color || hashColor(a.id), title:`${a.name} ekstresi`, sub:'Kredi kartı', amount:-c.dueNow});
-  }
+// things that will happen in period m but are not transactions yet: recurring occurrences, unpaid loan
+// installments, card statements due. They show in the list on their own date, marked as upcoming.
+function upcomingIn(m) {
+  const [a, b] = periodRange(m), t = todayStr(), out = [];
   for (const r of S.rules || []) {
     if (!ruleActive(r)) continue;
-    const L = ruleLook(r); let d = r.nextDate, g = 0;
-    while (d <= lim && (!r.endDate || d <= r.endDate) && g++ < 60) {
-      out.push({date:d, action:`data-action="edit-rule" data-id="${r.id}"`, icon:L.icon, color:L.color, title:L.title, sub:L.acc, amount:r.type === 'income' ? r.amount : -r.amount, transfer:r.type === 'transfer'});
+    let d = r.nextDate, g = 0;
+    while (d <= b && (!r.endDate || d <= r.endDate) && g++ < 400) {
+      if (d >= a) out.push({v:'rule', id:r.id, date:d, type:r.type, amount:r.amount, accountId:r.accountId, toAccountId:r.toAccountId, categoryId:r.categoryId, note:r.note, icon:r.icon, pending:d <= t});
       d = nextOcc(r, d);
     }
   }
-  return out.sort((a, b) => a.date.localeCompare(b.date));
+  for (const l of S.loans || []) for (const r of loanState(l).rows) if (!r.paid && r.date >= a && r.date <= b)
+    out.push({v:'loan', id:l.id, date:r.date, type:'expense', amount:r.amount, accountId:l.payFrom || l.accountId, categoryId:linkCat('loan', 'expense'), note:`${l.name} · ${r.i + 1}/${l.count}. taksit`, icon:l.icon, late:r.date < t});
+  for (const acc of S.accounts) {
+    if (acc.type !== 'card' || acc.deleted) continue;
+    const c = cardCycle(acc);
+    if (c && c.dueNow > 0.004 && c.due >= a && c.due <= b)
+      out.push({v:'card', id:acc.id, date:c.due, type:'transfer', amount:c.dueNow, accountId:acc.parentId, toAccountId:acc.id, note:`${acc.name} ekstresi`, icon:acc.icon || '💳', late:c.due < t});
+  }
+  return out;
 }
-function upRow(u) {
-  const late = daysUntil(u.date) < 0;
-  const amt = u.transfer ? money(Math.abs(u.amount)) : (u.amount >= 0 ? '+' : '−') + money(Math.abs(u.amount));
-  return `<button class="row" ${u.action}><div class="ic" style="background:${u.color}22;color:${u.color}">${ico(u.icon)}</div>
-    <div class="t"><b>${esc(u.title)}</b><small>${esc(u.sub)}</small></div>
-    <div class="a num ${u.amount > 0 && !u.transfer ? 'pos' : ''}">${amt}<small class="${late ? 'neg' : ''}">${relDay(u.date)}</small></div></button>`;
+function vRow(u, ctxAcc) {
+  const c = D.cat.get(u.categoryId), tc = topCat(u.categoryId), isT = u.type === 'transfer';
+  const icon = u.icon || (isT ? '⇄' : c?.emoji || tc?.emoji || '•'), color = isT ? '#64748B' : tc?.color || '#64748B';
+  const title = u.v === 'card' ? 'Kart son ödeme' : isT ? 'Transfer' : c?.name || 'Kategorisiz';
+  const sub = isT ? `${u.accountId ? accName(u.accountId) : 'Hesap seçilmedi'} → ${accName(u.toAccountId)}` : `${c?.parentId && D.cat.get(c.parentId) ? D.cat.get(c.parentId).name + ' · ' : ''}${accName(u.accountId)}`;
+  const v = u.type === 'income' ? u.amount : u.type === 'expense' ? -u.amount : ctxAcc === u.toAccountId ? u.amount : ctxAcc === u.accountId ? -u.amount : 0;
+  const amt = isT && !v ? money(u.amount) : (v >= 0 ? '+' : '−') + money(Math.abs(v || u.amount));
+  const tag = u.late ? '<span class="badge late">Gecikti</span>' : u.pending ? '<span class="badge soon">Onay bekliyor</span>' : '<span class="badge soon">Yaklaşan</span>';
+  const act = u.v === 'rule' ? `data-action="edit-rule" data-id="${u.id}"` : u.v === 'loan' ? `data-action="open-loan" data-id="${u.id}"` : `data-action="open-acc" data-id="${u.id}"`;
+  return `<button class="row upcoming" ${act}><div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
+    <div class="t"><b>${esc(title)}${tag}</b>${u.note ? `<small class="tx-note">${esc(u.note)}</small>` : ''}<small>${esc(sub)}</small></div>
+    <div class="a num ${v > 0 ? 'pos' : ''}">${amt}</div></button>`;
 }
 
 /* ---------- linked groups ----------
@@ -601,7 +628,7 @@ const ICON = {
 };
 const monthSwitch = () => { const [a, b] = periodRange(ui.month); return `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki dönem">${ICON.chevL}</button><span>${monthLabel(ui.month)}${periodDay() > 1 ? `<small>${shortDate(a)} – ${shortDate(b)}</small>` : ''}</span><button data-action="month" data-d="1" aria-label="Sonraki dönem">${ICON.chevR}</button></div>`; };
 
-function txRow(t, ctxAcc) {
+function txRow(t, ctxAcc, withDate) {
   let icon, color, title, sub, amt, cls = '';
   if (t.type === 'transfer') {
     icon = t.icon || '⇄'; color = '#64748B';
@@ -623,7 +650,7 @@ function txRow(t, ctxAcc) {
   const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
-    <div class="t"><b>${esc(title)}${planned}</b>${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${esc(sub)}</small></div>
+    <div class="t"><b>${esc(title)}${planned}</b>${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
     <div class="a num ${cls}">${amt}</div></button>`;
 }
 
@@ -671,15 +698,15 @@ VIEWS.home = () => {
   </div>
   ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
   ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
-  <section class="card"><h3>Son 6 ay</h3>
-    <div class="bars">${ms.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inc / maxV * 100}%"></i><i class="e" style="height:${x.exp / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
-    <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div>
+  <section class="card"><h3>Son 6 dönem</h3>
+    <div class="mrows">${ms.slice().reverse().map(x => { const d = x.inc - x.exp; return `<button class="mrow ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}">
+      <span class="ml">${monthShort(x.m)}<small>${x.m.slice(0, 4)}</small></span>
+      <span class="mb"><span><i class="g" style="width:${x.inc / maxV * 100}%"></i><em class="num">${money(x.inc, false)}</em></span><span><i class="e" style="width:${x.exp / maxV * 100}%"></i><em class="num">${money(x.exp, false)}</em></span></span>
+      <span class="mn num ${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d), false)}<small>fark</small></span></button>`; }).join('')}</div>
+    <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span><span style="margin-left:auto">Döneme dokun, o döneme geç</span></div>
   </section>
-  ${(() => { const up = upcoming(30), pend = pendingRules().length;
-    if (!up.length && !pend) return `<div class="sec-title">Yaklaşan ödemeler</div><button class="list row" data-action="tab" data-tab="recurring"><div class="ic" style="background:#12A26B22">🔁</div><div class="t"><b>Tekrarlayan işlem ekle</b><small>Kira, maaş, abonelik, fatura…</small></div>${ICON.rowChev}</button>`;
-    return `<div class="sec-title">Yaklaşan ödemeler <a href="#" data-action="tab" data-tab="recurring">Tekrarlayanlar${pend ? ` (${pend})` : ''}</a></div><div class="list">${up.slice(0, 6).map(upRow).join('')}</div>`; })()}
   <div class="sec-title">Son işlemler <a href="#" data-action="tab" data-tab="txs">Tümü</a></div>
-  ${recent.length ? `<div class="list">${recent.map(t => txRow(t)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
+  ${recent.length ? `<div class="list">${recent.map(t => txRow(t, null, true)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
 };
 
 function welcome() {
@@ -814,7 +841,7 @@ function renderTxList() {
       const hay = [t.note, t.memo, catPath(t.categoryId), accName(t.accountId), t.toAccountId && accName(t.toAccountId), String(t.amount).replace('.', ',')].join(' ').toLocaleLowerCase('tr');
       return hay.includes(q);
     }).sort(txSort);
-  } else list = D.byMonth.get(ui.month) || [];
+  } else list = [...(D.byMonth.get(ui.month) || []), ...upcomingIn(ui.month)].sort(txSort);
   if (ui.accFilter) list = list.filter(t => t.accountId === ui.accFilter || t.toAccountId === ui.accFilter);
   // a linked category (Kredi, Yatırım, Borç) shows its income and expense side together, with the net
   const lk = ui.catFilter && linkOf(ui.catFilter);
@@ -822,7 +849,7 @@ function renderTxList() {
   else if (ui.catFilter) list = list.filter(t => t.categoryId === ui.catFilter || D.cat.get(t.categoryId)?.parentId === ui.catFilter);
   let sum = '';
   if (lk) {
-    let inn = 0, out = 0; for (const t of list) if (t.type === 'income') inn += t.amount; else out += t.amount;
+    let inn = 0, out = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
     sum = `<div class="link-sum"><span>Gelen<b class="num pos">+${money(inn, false)}</b></span><span>Giden<b class="num neg">−${money(out, false)}</b></span><span>Net<b class="num ${inn - out >= 0 ? 'pos' : 'neg'}">${inn - out >= 0 ? '+' : '−'}${money(Math.abs(inn - out), false)}</b></span></div>`;
   }
   const total = list.length; list = list.slice(0, 400);
@@ -830,8 +857,8 @@ function renderTxList() {
   let html = sum, day = null, buf = [];
   const flush = () => {
     if (!buf.length) return;
-    const net = buf.reduce((s, t) => s + (t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
-    html += `<div class="day"><span>${dayLabel(day)}</span><span class="num">${net ? (net > 0 ? '+' : '−') + money(Math.abs(net)) : ''}</span></div><div class="list">${buf.map(t => txRow(t, ui.accFilter)).join('')}</div>`;
+    const net = buf.reduce((s, t) => s + (t.v ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
+    html += `<div class="day"><span>${dayLabel(day)}</span><span class="num">${net ? (net > 0 ? '+' : '−') + money(Math.abs(net)) : ''}</span></div><div class="list">${buf.map(t => t.v ? vRow(t, ui.accFilter) : txRow(t, ui.accFilter)).join('')}</div>`;
     buf = [];
   };
   for (const t of list) { if (t.date !== day) { flush(); day = t.date; } buf.push(t); }
@@ -987,19 +1014,29 @@ function drawTxSheet() {
       <div class="field"><label>Bitiş</label><input type="date" data-f="endDate" value="${d.endDate || ''}" placeholder="Süresiz"></div>
       <div class="field"><label>Otomatik ekle</label><span style="flex:1;text-align:right;color:var(--muted);font-size:13px">Kapalıysa onayını bekler</span><input type="checkbox" data-f="auto" ${d.auto ? 'checked' : ''}></div>
       ${d.isNew ? '' : `<div class="field"><label>Duraklat</label><span style="flex:1"></span><input type="checkbox" data-f="paused" ${d.paused ? 'checked' : ''}></div>`}`
-      : `<div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>`}
+      : `<div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>
+      ${d.isNew && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="inst" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.inst === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
+      ${d.isNew && !isAdj && !(+d.inst > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}`}
       <div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı"></div>
     </div>
     ${d.type === 'transfer' || isAdj ? '' : `
       <div class="sub-label">Kategori</div>
       <div class="cats">${parents.map(p => `<button class="chip ${d.catParent === p.id ? 'on' : ''}" data-action="pick-parent" data-id="${p.id}">${p.emoji ? ico(p.emoji, 'inline') : ''} ${esc(p.name)}</button>`).join('')}</div>
       ${children.length ? `<div class="sub-label">Alt kategori</div><div class="cats">${children.map(ch => `<button class="chip ${d.categoryId === ch.id ? 'on' : ''}" data-action="pick-cat" data-id="${ch.id}">${esc(ch.name)}</button>`).join('')}</div>` : ''}`}
+    ${d.isNew && +d.inst > 1 && d.type === 'expense' ? `<p class="note">Toplam tutarı gir. ${instPreview(d)}</p>` : ''}
     ${d.isRule ? `<p class="note">Ayın 29–31'i gibi günler kısa aylarda ayın son gününe kayar. Geçmiş tarihli tekrarlar geriye dönük eklenmez.</p>` : ''}
     ${d.isNew ? '' : `<button class="secondary danger" data-action="del-tx">${d.isRule ? 'Tekrarı sil (eklenmiş işlemler kalır)' : 'İşlemi sil'}</button>`}
     ${!d.isRule && !d.isNew && d.loanId ? `<p class="note" style="text-align:center">Bu işlem "${esc(S.loans.find(x => x.id === d.loanId)?.name || 'kredi')}" kredisine bağlı${d.inst != null ? ` (${d.inst + 1}. taksit). Silersen taksit ödenmemiş görünür` : ''}.</p>` : ''}
     ${!d.isRule && !d.isNew && d.recurringId ? '<p class="note" style="text-align:center">Bu işlem bir tekrarlayan işlemden oluşturuldu. Burada değiştirmek yalnızca bu kaydı etkiler.</p>' : ''}
   `);
   sizeAmt();
+}
+// splits a total into n monthly installments; the last one absorbs the rounding
+function splitInst(total, n) { const base = Math.floor(total / n * 100) / 100; return Array.from({length:n}, (_, i) => i === n - 1 ? r2(total - base * (n - 1)) : base); }
+function instPreview(d) {
+  const total = parseAmount(d.amount), n = +d.inst; if (!(total > 0)) return `${n} aya bölünür; her ay aynı gün bir taksit eklenir.`;
+  const parts = splitInst(total, n), [y, m, dd] = (d.date || todayStr()).split('-').map(Number);
+  return `${n} × ${money(parts[0])}${parts[n - 1] !== parts[0] ? ` (son taksit ${money(parts[n - 1])})` : ''} · son taksit ${parseD(mkDate(y, m + n - 1, dd)).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}`;
 }
 function sizeAmt() { const i = $('#f-amt'); if (i) i.style.width = Math.max(1, (i.value || i.placeholder).length) * 0.62 + 0.3 + 'em'; }
 
@@ -1237,15 +1274,41 @@ const A = {
     if (d.recurringId) t.recurringId = d.recurringId;
     if (d.loanId) { t.loanId = d.loanId; if (d.inst != null) t.inst = d.inst; }
     if (d.icon && d.type !== 'adjust') t.icon = d.icon;
+    if (d.instGroup) Object.assign(t, {instGroup:d.instGroup, instNo:d.instNo, instTotal:d.instTotal});
+    if (d.isNew && t.type === 'expense' && +d.inst > 1) {
+      if (!(t.amount > 0)) return toast('Taksitli işlemde tutar pozitif olmalı');
+      const n = +d.inst, parts = splitInst(t.amount, n), group = uid(), [y, m, dd] = t.date.split('-').map(Number);
+      for (let k = 0; k < n; k++) S.txs.push({...t, id:k === 0 ? t.id : uid(), amount:parts[k], date:mkDate(y, m + k, dd), ts:t.ts + k,
+        note:`${t.note ? t.note + ' ' : ''}(${k + 1}/${n})`, instGroup:group, instNo:k + 1, instTotal:n});
+      S.meta.lastAccount = t.accountId;
+      save(); closeSheet(); render(); toast(`${n} taksit eklendi · aylık ${money(parts[0])}`);
+      return;
+    }
+    let rule = null;
+    if (d.isNew && d.repeat && d.type !== 'adjust') { // this transaction plus a rule that repeats it from its date on
+      rule = {id:uid(), type:t.type, amount:t.amount, accountId:t.accountId, toAccountId:t.toAccountId, categoryId:t.categoryId, note:t.note, icon:t.icon || null,
+        freq:d.repeat, startDate:t.date, anchorDay:+t.date.slice(8), endDate:null, auto:true, paused:false};
+      const today = todayStr();
+      rule.nextDate = firstOcc(rule, t.date >= today ? addDays(t.date, 1) : today);
+      t.recurringId = rule.id; (S.rules = S.rules || []).push(rule);
+    }
     const i = S.txs.findIndex(x => x.id === t.id);
     if (i >= 0) S.txs[i] = t; else S.txs.push(t);
     S.meta.lastAccount = t.accountId;
-    save(); closeSheet(); render(); toast(d.isNew ? 'İşlem eklendi' : 'Güncellendi');
+    if (rule) runRecurring();
+    save(); closeSheet(); render();
+    toast(rule ? `İşlem eklendi · ${FREQ[rule.freq].toLocaleLowerCase('tr')} tekrarlanacak, sonraki ${shortDate(rule.nextDate)}` : d.isNew ? 'İşlem eklendi' : 'Güncellendi');
   },
   'del-tx'() {
     if (sheetState.isRule) {
       if (!confirm('Bu tekrarlayan işlem silinsin mi? Daha önce eklenmiş işlemler yerinde kalır.')) return;
       S.rules = S.rules.filter(r => r.id !== sheetState.id); save(); closeSheet(); render(); toast('Tekrar silindi'); return;
+    }
+    if (sheetState.instGroup) {
+      const g = sheetState.instGroup, n = S.txs.filter(t => t.instGroup === g).length;
+      if (n > 1 && confirm(`Bu işlem ${n} taksitlik bir alışverişin parçası. Tüm taksitler silinsin mi?\n\n"İptal" dersen yalnızca bu taksit için ayrıca sorulur.`)) {
+        S.txs = S.txs.filter(t => t.instGroup !== g); save(); closeSheet(); render(); toast(`${n} taksit silindi`); return;
+      }
     }
     if (!confirm('Bu işlem silinsin mi?')) return; S.txs = S.txs.filter(t => t.id !== sheetState.id); save(); closeSheet(); render(); toast('Silindi'); },
   'add-acc'() { accSheet(); },
@@ -1312,6 +1375,7 @@ document.addEventListener('input', e => {
   if (!sheetState) return;
   if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
   if (el.id === 'f-amt') sizeAmt();
+  if (el.id === 'f-amt' && +sheetState.inst > 1 && !sheetState.isRule) { const n = document.querySelector('#sheet p.note'); if (n) n.textContent = 'Toplam tutarı gir. ' + instPreview(sheetState); }
   if (sheetState.isLoan && $('#loan-sum')) $('#loan-sum').innerHTML = loanSummary(sheetState);
   if (el.dataset.cf) { sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; }
 });
@@ -1321,6 +1385,7 @@ document.addEventListener('change', e => {
     sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
     if (el.dataset.redraw) drawAccSheet();
     if (sheetState.isPeriod) drawPeriodSheet();
+    if (el.dataset.redrawTx) drawTxSheet();
     if (el.dataset.f === 'accountId' && sheetState.type === 'transfer') drawTxSheet();
   }
   if (el.dataset.cf) sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value;
