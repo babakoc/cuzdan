@@ -89,7 +89,16 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .crop-zoom{display:flex;align-items:center;gap:12px;padding:0 12px;color:var(--muted);font-weight:700}
 .crop-zoom input{flex:1;accent-color:var(--accent)}
 .link-lines{margin-top:12px;display:flex;flex-direction:column;gap:6px;font-size:14px}
-.link-lines div{display:flex;justify-content:space-between;background:rgba(255,255,255,.08);border-radius:10px;padding:7px 10px}
+.link-lines div,.link-lines button{display:flex;justify-content:space-between;align-items:center;gap:10px;background:rgba(255,255,255,.08);border-radius:10px;padding:7px 10px;color:#fff;text-align:left;width:100%}
+.link-lines small{display:block;font-size:11px;opacity:.6;margin-top:1px}
+.link-lines b{white-space:nowrap}
+.suggest h3{font-size:16px}
+.sug-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.sug-row>div{flex:1;min-width:0}
+.sug-row b{display:block;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sug-row small{display:block;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sug-row>span{font-weight:650;font-size:14px;white-space:nowrap}
+.sug-row button{padding:6px 12px;border-radius:9px;background:var(--chip);color:var(--accent);font-weight:700;font-size:13px}
 .link-lines span{opacity:.75}
 .row.inst.done{opacity:.6}
 .pay-btn{padding:7px 14px;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:14px}
@@ -528,6 +537,9 @@ function linkOf(catId) { let c = D?.cat.get(catId) || S.categories.find(x => x.i
 // every group needs one income and one expense category: adopt one with the group's name, else create it
 function ensureLinks() {
   const tr = v => String(v || '').trim().toLocaleLowerCase('tr');
+  // a category named exactly like a group (e.g. an income "Borç" made later in Money Manager) joins it,
+  // unless the user already chose a group (or none) for it in Cüzdan
+  for (const c of S.categories) if (!('link' in c)) { const k = Object.keys(LINKS).find(k => tr(LINKS[k].name) === tr(c.name)); if (k) c.link = k; }
   for (const [key, L] of Object.entries(LINKS)) for (const kind of ['income', 'expense']) {
     if (S.categories.some(c => c.kind === kind && c.link === key)) continue;
     const named = S.categories.filter(c => c.kind === kind && tr(c.name) === tr(L.name)).sort((a, b) => (!!a.parentId - !!b.parentId) || (!!a.hidden - !!b.hidden))[0];
@@ -536,6 +548,11 @@ function ensureLinks() {
   }
 }
 const linkCat = (key, kind) => S.categories.find(c => c.kind === kind && c.link === key)?.id || null;
+function moveToLink(list, key) {
+  ensureLinks();
+  for (const t of list) if (t) t.categoryId = linkCat(key, t.type === 'income' ? 'income' : 'expense');
+  save(); render(); toast(`${list.length} kayıt ${LINKS[key].name} grubuna taşındı`);
+}
 function linkTotals(key, list = S.txs) {
   let inn = 0, out = 0;
   for (const t of list) { if ((t.type !== 'income' && t.type !== 'expense') || linkOf(t.categoryId) !== key) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
@@ -755,7 +772,7 @@ VIEWS.accounts = () => {
 VIEWS.txs = () => {
   const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter), L = ui.linkFilter && LINKS[ui.linkFilter];
   return `<header class="big"><h1>${a ? esc(a.name) : L ? L.name : 'İşlemler'}</h1>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
-  ${a ? accHero(a) : ''}${L ? linkHero(ui.linkFilter) : ''}
+  ${a ? accHero(a) : ''}${L ? linkHero(ui.linkFilter) + linkSuggest(ui.linkFilter) : ''}
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)} ✕</button>` : ''}</div>` : ''}
   <div id="month-wrap">${ui.q || ui.linkFilter ? '' : monthSwitch()}</div>
@@ -764,18 +781,35 @@ VIEWS.txs = () => {
 function linkHero(k) {
   const L = LINKS[k], all = linkTotals(k), net = all.in - all.out;
   // per-name breakdown, so "Yatırım › Altın" bought and sold nets out on its own line
+  // Borç is tracked per person/subject (the note), the other groups per category name
   const by = new Map();
   for (const t of S.txs) { if ((t.type !== 'income' && t.type !== 'expense') || linkOf(t.categoryId) !== k) continue;
-    const c = D.cat.get(t.categoryId), name = c && !c.link ? c.name : 'Genel'; const o = by.get(name) || {in:0, out:0};
-    if (t.type === 'income') o.in += t.amount; else o.out += t.amount; by.set(name, o); }
-  const lines = [...by.entries()].sort((a, b) => (b[1].in + b[1].out) - (a[1].in + a[1].out)).slice(0, 6);
+    const c = D.cat.get(t.categoryId), name = k === 'debt' ? (t.note || '').trim() || 'Notsuz kayıtlar' : c && !c.link ? c.name : 'Genel';
+    const key = name.toLocaleLowerCase('tr'), o = by.get(key) || {name, in:0, out:0};
+    if (t.type === 'income') o.in += t.amount; else o.out += t.amount; by.set(key, o); }
+  const lines = [...by.values()].map(o => [o.name, o]).sort((a, b) => k === 'debt' ? Math.abs(b[1].out - b[1].in) - Math.abs(a[1].out - a[1].in) : (b[1].in + b[1].out) - (a[1].in + a[1].out)).slice(0, k === 'debt' ? 10 : 6);
   const words = k === 'loan' ? ['Çekilen', 'Ödenen'] : k === 'invest' ? ['Satış / gelen', 'Alış / giden'] : ['Gelen', 'Giden'];
   return `<section class="hero" style="padding:18px 20px"><div class="label">${k === 'invest' ? 'Toplam kâr / zarar (gelen − giden)' : 'Net (gelen − giden)'}</div>
     <div class="big-amt num" style="margin-bottom:12px">${net >= 0 ? '+' : '−'}${money(Math.abs(net))}</div>
     <div class="hero-row"><div><span>${words[0]}</span><b class="num">${money(all.in, false)}</b></div><div><span>${words[1]}</span><b class="num">${money(all.out, false)}</b></div></div>
     ${k === 'loan' && D.loanDebt ? `<div class="label" style="margin-top:12px">Ödenmemiş taksitler: ${money(D.loanDebt)}</div>` : ''}
-    ${lines.length > 1 ? `<div class="link-lines">${lines.map(([n, o]) => `<div><span>${esc(n)}</span><b class="num">${o.in - o.out >= 0 ? '+' : '−'}${money(Math.abs(o.in - o.out), false)}</b></div>`).join('')}</div>` : ''}
+    ${k === 'debt' && lines.length ? `<div class="label" style="margin-top:14px">Kişi / konu bazında</div><div class="link-lines">${lines.map(([n, o]) => { const open = r2(o.out - o.in);
+      return `<button data-action="debt-q" data-q="${esc(n)}"><span>${esc(n)}<small>verilen ${money(o.out, false)} · gelen ${money(o.in, false)}</small></span><b class="num">${Math.abs(open) < 0.01 ? 'Kapandı ✓' : open > 0 ? `Alacak ${money(open, false)}` : `Borç ${money(-open, false)}`}</b></button>`; }).join('')}</div>`
+      : lines.length > 1 ? `<div class="link-lines">${lines.map(([n, o]) => `<div><span>${esc(n)}</span><b class="num">${o.in - o.out >= 0 ? '+' : '−'}${money(Math.abs(o.in - o.out), false)}</b></div>`).join('')}</div>` : ''}
+    ${k === 'debt' ? '<div class="label" style="margin-top:10px;opacity:.6">Kayıtlar nota göre eşleşir: verdiğin ve geri alınan tutarı aynı notla gir.</div>' : ''}
     ${k === 'invest' ? '<div class="label" style="margin-top:10px;opacity:.6">Eksi değer, henüz satılmamış yatırımın tutarı da olabilir.</div>' : ''}</section>`;
+}
+function linkSuggest(k) {
+  if (k !== 'debt') return '';
+  const norm = v => String(v || '').trim().toLocaleLowerCase('tr');
+  const notes = new Set(S.txs.filter(t => (t.type === 'income' || t.type === 'expense') && linkOf(t.categoryId) === k && norm(t.note)).map(t => norm(t.note)));
+  const out = S.txs.filter(t => (t.type === 'income' || t.type === 'expense') && linkOf(t.categoryId) !== k && notes.has(norm(t.note))).sort(txSort);
+  if (!out.length) return '';
+  return `<section class="card suggest"><h3>Başka kategoride kalmış ${out.length} kayıt</h3>
+    <p class="note" style="margin:-6px 0 10px">Bu kayıtlar Borç'taki bir kaydın notunu taşıyor ama başka kategoriye girilmiş, bu yüzden hesaba katılmıyor. Taşırsan gelirler Borç gelirine, giderler Borç giderine geçer.</p>
+    ${out.slice(0, 12).map(t => `<div class="sug-row"><div><b>${esc(t.note)}</b><small>${shortDate(t.date)} · ${esc(catPath(t.categoryId))} · ${esc(accName(t.accountId))}</small></div>
+      <span class="num ${t.type === 'income' ? 'pos' : ''}">${t.type === 'income' ? '+' : '−'}${money(t.amount, false)}</span><button data-action="link-move" data-id="${t.id}">Taşı</button></div>`).join('')}
+    <button class="primary" style="margin-top:12px;height:46px;font-size:16px" data-action="link-move-all" data-k="${k}">Hepsini Borç'a taşı (${out.length})</button></section>`;
 }
 function accHero(a) {
   const bal = D.bal.get(a.id) || 0, fut = D.future.get(a.id) || 0, isCard = a.type === 'card';
@@ -1199,6 +1233,14 @@ const A = {
     save(); closeSheet(); render(); toast('Kredi silindi');
   },
   'open-link'(el) { ui.linkFilter = el.dataset.k; ui.accFilter = null; ui.catFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
+  'link-move'(el) { moveToLink([S.txs.find(t => t.id === el.dataset.id)], ui.linkFilter); },
+  'link-move-all'(el) {
+    const k = el.dataset.k, norm = v => String(v || '').trim().toLocaleLowerCase('tr');
+    const notes = new Set(S.txs.filter(t => (t.type === 'income' || t.type === 'expense') && linkOf(t.categoryId) === k && norm(t.note)).map(t => norm(t.note)));
+    const list = S.txs.filter(t => (t.type === 'income' || t.type === 'expense') && linkOf(t.categoryId) !== k && notes.has(norm(t.note)));
+    if (confirm(`${list.length} kayıt Borç kategorisine taşınsın mı? Gelirler Borç gelirine, giderler Borç giderine geçer.`)) moveToLink(list, k);
+  },
+  'debt-q'(el) { ui.q = el.dataset.q; render(); $('#txlist')?.scrollIntoView({behavior:'smooth'}); },
   'clear-link'() { ui.linkFilter = null; render(); },
   'open-acc'(el) { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.linkFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
   'clear-acc'() { ui.accFilter = null; render(); },
