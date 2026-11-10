@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cüzdan">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.json">
+<title>Cüzdan</title>
+<style>
+:root{
+  --bg:#F2F2F7; --card:#FFFFFF; --card2:#F7F7FA; --text:#0B0B12; --muted:#8B8B96; --line:rgba(60,60,67,.12);
+  --accent:#4C5BFF; --pos:#12A26B; --neg:#E5484D; --chip:#EDEDF2;
+  --hero1:#151A3B; --hero2:#3A2E7A; --hero3:#0E6E5C;
+  --bar:rgba(255,255,255,.72); --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(20,20,40,.06);
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#000; --card:#141418; --card2:#1C1C22; --text:#F4F4F7; --muted:#8E8E99; --line:rgba(255,255,255,.08);
+  --accent:#7C87FF; --pos:#3DD68C; --neg:#FF6B6E; --chip:#23232B; --bar:rgba(20,20,24,.72); --shadow:none;}
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+body{font:16px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;
+  padding-top:env(safe-area-inset-top);min-height:100vh;overscroll-behavior-y:none}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+input,select,textarea{font:inherit;color:inherit;font-size:17px}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+#view{padding:8px 16px calc(110px + env(safe-area-inset-bottom));max-width:640px;margin:0 auto}
+header.big{padding:14px 2px 10px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
+header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
+.eyebrow{font-size:13px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.icon-btn{width:38px;height:38px;border-radius:50%;background:var(--card);display:grid;place-items:center;box-shadow:var(--shadow);color:var(--accent)}
+.icon-btn svg{width:20px;height:20px}
+
+.hero{border-radius:26px;padding:22px 22px 18px;color:#fff;position:relative;overflow:hidden;
+  background:radial-gradient(120% 140% at 100% 0%,var(--hero2) 0%,transparent 55%),radial-gradient(120% 120% at 0% 100%,var(--hero3) 0%,transparent 55%),var(--hero1)}
+.hero .label{font-size:13px;opacity:.7;font-weight:600}
+.hero .big-amt{font-size:38px;font-weight:750;letter-spacing:-.03em;margin:4px 0 16px}
+.hero .big-amt small{font-size:20px;opacity:.6;font-weight:600}
+.hero-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hero-row div{background:rgba(255,255,255,.09);border-radius:16px;padding:10px 12px}
+.hero-row span{display:block;font-size:12px;opacity:.65}
+.hero-row b{font-size:17px;font-weight:650}
+
+.month{display:flex;align-items:center;justify-content:center;gap:6px;margin:20px 0 12px}
+.month button{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--accent)}
+.month button:disabled{opacity:.3}
+.month span{min-width:150px;text-align:center;font-weight:650;font-size:17px}
+
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tile{background:var(--card);border-radius:18px;padding:12px;box-shadow:var(--shadow);min-width:0}
+.tile span{font-size:12px;color:var(--muted);font-weight:600}
+.tile b{display:block;font-size:16px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pos{color:var(--pos)} .neg{color:var(--neg)}
+
+.card{background:var(--card);border-radius:22px;padding:16px;box-shadow:var(--shadow);margin-top:14px}
+.card h3,.sec-title{margin:0 0 12px;font-size:17px;font-weight:700;letter-spacing:-.01em}
+.sec-title{margin:24px 4px 8px;display:flex;justify-content:space-between;align-items:baseline}
+.sec-title small{font-size:13px;color:var(--muted);font-weight:600}
+.sec-title a{font-size:15px;color:var(--accent);font-weight:600}
+
+.donut-wrap{display:flex;gap:16px;align-items:center}
+.donut{flex:0 0 132px;position:relative}
+.donut .c{position:absolute;inset:0;display:grid;place-content:center;text-align:center}
+.donut .c span{font-size:11px;color:var(--muted);font-weight:600}
+.donut .c b{font-size:15px}
+.legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:9px}
+.legend .r{display:flex;align-items:center;gap:8px;font-size:14px;text-align:left;width:100%}
+.legend .dot{width:9px;height:9px;border-radius:3px;flex:0 0 auto}
+.legend .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.legend .p{color:var(--muted);font-size:13px}
+
+.bars{display:flex;align-items:flex-end;gap:10px;height:130px;padding-top:6px}
+.bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+.bars .col{width:100%;max-width:34px;display:flex;gap:3px;align-items:flex-end;height:100%}
+.bars .col i{flex:1;border-radius:6px 6px 3px 3px;background:var(--chip);min-height:3px}
+.bars .col i.e{background:var(--neg);opacity:.85} .bars .col i.g{background:var(--pos);opacity:.85}
+.bars .b.cur span{color:var(--text);font-weight:700}
+.bars span{font-size:11px;color:var(--muted);font-weight:600}
+.bar-legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
+.bar-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+
+.list{background:var(--card);border-radius:20px;box-shadow:var(--shadow);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;width:100%;text-align:left;position:relative}
+.row+.row::before{content:"";position:absolute;top:0;left:62px;right:0;border-top:1px solid var(--line)}
+.row.nested{padding-left:30px}
+.row.nested+.row::before,.row+.row.nested::before{left:62px}
+.ic{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-size:18px;flex:0 0 auto}
+.row .t{flex:1;min-width:0}
+.row .t b{display:block;font-weight:560;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t small{display:block;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .a{text-align:right;font-weight:620;white-space:nowrap}
+.row .a small{display:block;font-size:12px;color:var(--muted);font-weight:500}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted);margin-left:6px;vertical-align:1px}
+.meter{height:4px;border-radius:2px;background:var(--chip);margin-top:6px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--accent);border-radius:2px}
+.day{display:flex;justify-content:space-between;margin:18px 6px 6px;font-size:13px;color:var(--muted);font-weight:650}
+.chev{color:var(--muted);opacity:.5;width:8px}
+
+.search{display:flex;align-items:center;gap:8px;background:var(--chip);border-radius:12px;padding:0 12px;height:40px;margin:4px 0 6px}
+.search input{flex:1;border:0;background:none;outline:none;min-width:0}
+.search svg{width:16px;color:var(--muted)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;padding:7px 12px;border-radius:999px;background:var(--chip);font-size:14px;font-weight:600;white-space:nowrap}
+.chip.on{background:var(--accent);color:#fff}
+.empty{text-align:center;color:var(--muted);padding:40px 20px}
+.empty .big{font-size:42px;margin-bottom:8px}
+.welcome{text-align:center;padding:40px 18px}
+.welcome h2{font-size:26px;margin:16px 0 8px;letter-spacing:-.02em}
+.welcome p{color:var(--muted);margin:0 0 22px}
+
+.primary{display:block;width:100%;height:52px;border-radius:16px;background:var(--accent);color:#fff;font-weight:700;font-size:17px}
+.secondary{display:block;width:100%;height:48px;border-radius:14px;background:var(--chip);font-weight:650;margin-top:10px}
+.danger{color:var(--neg)}
+
+/* tab bar */
+nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--bar);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+  border-top:1px solid var(--line);padding:6px 8px calc(6px + env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(5,1fr);align-items:center}
+nav.tabs button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10px;font-weight:600;color:var(--muted);padding:4px 0}
+nav.tabs button svg{width:24px;height:24px}
+nav.tabs button.on{color:var(--accent)}
+nav.tabs .fab{justify-self:center;width:52px;height:52px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;box-shadow:0 6px 18px rgba(76,91,255,.4);margin-top:-18px}
+nav.tabs .fab svg{width:26px;height:26px}
+
+/* sheet */
+#scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .25s;z-index:30}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:31;background:var(--bg);border-radius:22px 22px 0 0;max-height:92vh;overflow-y:auto;
+  min-height:72vh;transform:translateY(105%);transition:transform .32s cubic-bezier(.2,.9,.25,1);padding:8px 16px calc(20px + env(safe-area-inset-bottom));max-width:640px;margin:0 auto}
+body.sheet-open #scrim{opacity:1;pointer-events:auto}
+body.sheet-open #sheet{transform:none}
+body.sheet-open{overflow:hidden}
+.grab{width:38px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.sheet-head h2{margin:0;font-size:20px}
+.sheet-head button{color:var(--accent);font-weight:600}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--chip);border-radius:11px;padding:3px;margin-bottom:14px}
+.seg button{height:34px;border-radius:9px;font-weight:650;font-size:14px;color:var(--muted)}
+.seg button.on{background:var(--card);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.amount{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:10px 0 18px}
+.amount input{border:0;background:none;outline:none;font-size:46px;font-weight:750;text-align:right;width:2ch;max-width:78%;letter-spacing:-.03em;padding:0}
+.amount span{font-size:28px;color:var(--muted);font-weight:700}
+.form{background:var(--card);border-radius:16px;overflow:hidden;margin-bottom:14px}
+.field{display:flex;align-items:center;gap:12px;padding:0 14px;min-height:50px;position:relative}
+.field+.field::before{content:"";position:absolute;top:0;left:14px;right:0;border-top:1px solid var(--line)}
+.field label{flex:0 0 96px;color:var(--muted);font-size:15px}
+.field input,.field select{flex:1;border:0;background:none;outline:none;min-width:0;text-align:right;height:48px;-webkit-appearance:none;appearance:none}
+.field select{direction:rtl}
+.field input[type=checkbox]{flex:0 0 auto;width:22px;height:22px;-webkit-appearance:checkbox;appearance:auto}
+.cats{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.cats .chip{display:flex;align-items:center;gap:6px}
+.sub-label{font-size:13px;color:var(--muted);font-weight:650;margin:0 4px 8px;text-transform:uppercase;letter-spacing:.03em}
+.swatches{display:flex;gap:10px;flex-wrap:wrap;padding:12px 14px}
+.swatches button{width:30px;height:30px;border-radius:50%}
+.swatches button.on{outline:3px solid var(--text);outline-offset:2px}
+details.hidden-accs summary{list-style:none;cursor:pointer}
+details.hidden-accs summary::-webkit-details-marker{display:none}
+#toast{position:fixed;left:50%;top:calc(12px + env(safe-area-inset-top));transform:translate(-50%,-140%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:14px;font-weight:600;font-size:14px;z-index:50;transition:transform .3s;max-width:90vw}
+#toast.on{transform:translate(-50%,0)}
+.loading{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;place-items:center;z-index:60;color:#fff;font-weight:650}
+.loading.on{display:grid}
+.note{font-size:13px;color:var(--muted);margin:8px 6px 0;line-height:1.45}
+</style>
+</head>
+<body>
+<main id="view"></main>
+
+<nav class="tabs">
+  <button data-action="tab" data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Özet</button>
+  <button data-action="tab" data-tab="accounts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M2.5 10h19M6.5 15h4"/></svg>Hesaplar</button>
+  <button class="fab" data-action="add-tx" aria-label="İşlem ekle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button data-action="tab" data-tab="txs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>İşlemler</button>
+  <button data-action="tab" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Ayarlar</button>
+</nav>
+
+<div id="scrim" data-action="close-sheet"></div>
+<div id="sheet"></div>
+<div id="toast"></div>
+<div class="loading" id="loading">İçe aktarılıyor…</div>
+<input type="file" id="file-mm" accept=".mmbak,.sqlite,.db,application/octet-stream" hidden>
+<input type="file" id="file-json" accept=".json,application/json" hidden>
+
+<script>
+'use strict';
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-5);
+const pad = n => String(n).padStart(2, '0');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTRY = new Intl.NumberFormat('tr-TR', {style:'currency', currency:'TRY', minimumFractionDigits:2, maximumFractionDigits:2});
+const fmtTRY0 = new Intl.NumberFormat('tr-TR', {style:'currency', currency:'TRY', maximumFractionDigits:0});
+const money = (v, dec = true) => (dec ? fmtTRY : fmtTRY0).format(Math.abs(v) < 0.005 ? 0 : v);
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const curMonth = () => todayStr().slice(0, 7);
+const shiftMonth = (m, n) => { let [y, mo] = m.split('-').map(Number); mo += n; while (mo < 1) { mo += 12; y--; } while (mo > 12) { mo -= 12; y++; } return `${y}-${pad(mo)}`; };
+const parseD = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const monthLabel = m => parseD(m + '-01').toLocaleDateString('tr-TR', {month:'long', year:'numeric'});
+const monthShort = m => parseD(m + '-01').toLocaleDateString('tr-TR', {month:'short'});
+const dayLabel = s => {
+  const t = todayStr(), y = new Date(); y.setDate(y.getDate() - 1);
+  const ys = `${y.getFullYear()}-${pad(y.getMonth()+1)}-${pad(y.getDate())}`;
+  if (s === t) return 'Bugün'; if (s === ys) return 'Dün';
+  return parseD(s).toLocaleDateString('tr-TR', {day:'numeric', month:'long', weekday:'long'});
+};
+const parseAmount = s => {
+  s = String(s).trim().replace(/[₺\s]/g, '');
+  if (!s) return NaN;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/\.\d{3}(\.|$)/.test(s)) s = s.replace(/\./g, '');
+  return Math.round(parseFloat(s) * 100) / 100;
+};
+const PALETTE = ['#4C5BFF','#12A26B','#F5A524','#E5484D','#8E4EC6','#0EA5E9','#EC4899','#14B8A6','#F97316','#64748B','#A3A321','#6366F1'];
+// ordered so neighbours in a donut stay distinguishable
+const CAT_COLORS = ['#4C5BFF','#F5A524','#12A26B','#EC4899','#0EA5E9','#E5484D','#8E4EC6','#A3A321','#F97316','#14B8A6','#6366F1','#64748B'];
+const hashColor = s => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return PALETTE[h % PALETTE.length]; };
+const ACC_TYPES = {bank:'Banka Hesapları', card:'Kredi Kartları', cash:'Nakit', ewallet:'E-Cüzdan', savings:'Birikim', invest:'Yatırım', loan:'Krediler', insurance:'Sigorta', other:'Diğer'};
+const ACC_ICON = {bank:'🏦', card:'💳', cash:'💵', ewallet:'📱', savings:'🐖', invest:'📈', loan:'🧾', insurance:'🛡️', other:'👛'};
+const EMOJI_RULES = [
+  ['market','🛒'],['alkol','🍷'],['yiyecek','🍽️'],['yemek','🍽️'],['online','🛵'],['içecek','☕'],['eğlence','🎉'],['dışarı','🍻'],
+  ['toplu','🚇'],['özel taşıma','🚕'],['şehirler','🚌'],['taşıma','🚗'],['araba','🚗'],['kira','🔑'],['fatura','💡'],['ev','🏠'],
+  ['yatırım','📈'],['temettü','💹'],['kredi','🏦'],['abonelik','📺'],['hobi','🎨'],['kitap','📚'],['film','🎬'],['müzik','🎧'],
+  ['giyim','👕'],['kuşam','👕'],['berber','💈'],['sağlık','💊'],['hastane','🏥'],['yoga','🧘'],['eğitim','🎓'],['akademi','🎓'],
+  ['maaş','💼'],['harçlık','💵'],['cashback','💳'],['tazminat','🧾'],['işlem ücreti','🧾'],['borç','🤝'],['dost','🤝'],
+  ['geliştirme','🌱'],['günlük','🧺'],['idda','🎲'],['diğer','📦']
+];
+const guessEmoji = name => { const n = String(name).toLocaleLowerCase('tr'); for (const [k, e] of EMOJI_RULES) if (n.includes(k)) return e; return '•'; };
+
+/* ---------- storage (IndexedDB) ---------- */
+const DB = {
+  _db: null,
+  open() { if (this._db) return Promise.resolve(this._db); return new Promise((res, rej) => { const r = indexedDB.open('cuzdan', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(this._db = r.result); r.onerror = () => rej(r.error); }); },
+  async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
+  async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+};
+const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], meta:{}});
+let S = emptyState();
+let saveTimer;
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => DB.set('state', S).catch(e => toast('Kaydedilemedi: ' + e.message)), 150); }
+
+/* ---------- derived data ---------- */
+let D = null; // cache, rebuilt on change
+function derive() {
+  const today = todayStr();
+  const acc = new Map(S.accounts.map(a => [a.id, a]));
+  const cat = new Map(S.categories.map(c => [c.id, c]));
+  const bal = new Map(S.accounts.map(a => [a.id, +a.opening || 0]));
+  const future = new Map();
+  const add = (m, id, v) => m.set(id, (m.get(id) || 0) + v);
+  for (const t of S.txs) {
+    const m = t.date > today ? future : bal;
+    if (t.type === 'expense') add(m, t.accountId, -t.amount);
+    else if (t.type === 'income') add(m, t.accountId, t.amount);
+    else if (t.type === 'adjust') add(m, t.accountId, t.amount);
+    else if (t.type === 'transfer') { add(m, t.accountId, -t.amount); add(m, t.toAccountId, t.amount); }
+  }
+  const byMonth = new Map();
+  for (const t of S.txs) { const k = t.date.slice(0, 7); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
+  for (const l of byMonth.values()) l.sort(txSort);
+  let assets = 0, debts = 0;
+  for (const a of S.accounts) { if (a.hidden) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
+  D = {acc, cat, bal, future, byMonth, assets, debts, today};
+}
+const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
+const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
+const catPath = id => { const c = D.cat.get(id); if (!c) return 'Kategorisiz'; const p = c.parentId && D.cat.get(c.parentId); return p ? `${p.name} › ${c.name}` : c.name; };
+const accName = id => D.acc.get(id)?.name ?? 'Silinmiş hesap';
+function monthStats(m) {
+  let inc = 0, exp = 0; const cats = new Map();
+  for (const t of D.byMonth.get(m) || []) {
+    if (t.type === 'income') inc += t.amount;
+    else if (t.type === 'expense') { exp += t.amount; const c = topCat(t.categoryId); const k = c?.id || '_'; cats.set(k, (cats.get(k) || 0) + t.amount); }
+  }
+  return {inc, exp, cats};
+}
+
+/* ---------- ui state ---------- */
+const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, q:''};
+function render() {
+  derive();
+  document.querySelectorAll('nav.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
+  $('#view').innerHTML = (VIEWS[ui.tab] || VIEWS.home)();
+  if (ui.tab === 'txs') renderTxList();
+}
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2400); }
+
+const ICON = {
+  chevL:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
+  chevR:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  rowChev:'<svg class="chev" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m1 1 6 6-6 6"/></svg>'
+};
+const monthSwitch = () => `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki ay">${ICON.chevL}</button><span>${monthLabel(ui.month)}</span><button data-action="month" data-d="1" aria-label="Sonraki ay">${ICON.chevR}</button></div>`;
+
+function txRow(t, ctxAcc) {
+  let icon, color, title, sub, amt, cls = '';
+  if (t.type === 'transfer') {
+    icon = '⇄'; color = '#64748B';
+    title = t.note || 'Transfer';
+    sub = `${accName(t.accountId)} → ${accName(t.toAccountId)}`;
+    if (ctxAcc === t.accountId) { amt = '−' + money(t.amount); } else if (ctxAcc === t.toAccountId) { amt = '+' + money(t.amount); cls = 'pos'; } else amt = money(t.amount);
+  } else if (t.type === 'adjust') {
+    icon = '⚖️'; color = '#64748B'; title = 'Bakiye düzeltmesi'; sub = accName(t.accountId);
+    amt = (t.amount >= 0 ? '+' : '−') + money(Math.abs(t.amount)); cls = t.amount >= 0 ? 'pos' : '';
+  } else {
+    const c = D.cat.get(t.categoryId), tc = topCat(t.categoryId);
+    icon = c?.emoji || tc?.emoji || '•'; color = tc?.color || '#64748B';
+    title = t.note || c?.name || 'Kategorisiz';
+    sub = `${t.note ? catPath(t.categoryId) + ' · ' : (c?.parentId ? (D.cat.get(c.parentId)?.name + ' · ') : '')}${accName(t.accountId)}`;
+    const v = t.type === 'income' ? t.amount : -t.amount; // refunds are negative expenses
+    amt = (v >= 0 ? '+' : '−') + money(Math.abs(v)); cls = v >= 0 ? 'pos' : '';
+  }
+  const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '');
+  return `<button class="row" data-action="edit-tx" data-id="${t.id}">
+    <div class="ic" style="background:${color}22;color:${color}">${esc(icon)}</div>
+    <div class="t"><b>${esc(title)}${planned}</b><small>${esc(sub)}</small></div>
+    <div class="a num ${cls}">${amt}</div></button>`;
+}
+
+/* ---------- views ---------- */
+const VIEWS = {};
+VIEWS.home = () => {
+  if (!S.accounts.length) return welcome();
+  const st = monthStats(ui.month), net = D.assets + D.debts;
+  const nw = money(net).split(',');
+  // donut
+  const sorted = [...st.cats.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted.slice(0, 6), rest = sorted.slice(6).reduce((s, x) => s + x[1], 0);
+  const segs = top.map(([id, v]) => ({id, v, name: D.cat.get(id)?.name || 'Kategorisiz', emoji: D.cat.get(id)?.emoji || '', color: D.cat.get(id)?.color || '#64748B'}));
+  if (rest > 0) segs.push({id:'_rest', v:rest, name:'Diğerleri', color:'#94A3B8'});
+  const R = 52, C = 2 * Math.PI * R; let off = 0;
+  const arcs = segs.map(s => { const len = st.exp ? s.v / st.exp * C : 0; const g = segs.length > 1 ? Math.min(2.5, len / 3) : 0; const el = `<circle r="${R}" cx="66" cy="66" fill="none" stroke="${s.color}" stroke-width="16" stroke-dasharray="${Math.max(len - g, 0.01)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 66 66)"/>`; off += len; return el; }).join('');
+  // bars: last 6 months
+  const months = Array.from({length:6}, (_, i) => shiftMonth(ui.month, i - 5));
+  const ms = months.map(m => ({m, ...monthStats(m)}));
+  const maxV = Math.max(1, ...ms.map(x => Math.max(x.exp, x.inc)));
+  const recent = (D.byMonth.get(ui.month) || []).filter(t => t.date <= D.today || ui.month !== curMonth()).slice(0, 6);
+  return `
+  <header class="big"><div><div class="eyebrow">${new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'})}</div><h1>Özet</h1></div></header>
+  <section class="hero">
+    <div class="label">Net varlık</div>
+    <div class="big-amt num">${nw[0]}<small>,${nw[1] || '00'}</small></div>
+    <div class="hero-row"><div><span>Varlıklar</span><b class="num">${money(D.assets, false)}</b></div><div><span>Borçlar</span><b class="num">${money(Math.abs(D.debts), false)}</b></div></div>
+  </section>
+  ${monthSwitch()}
+  <div class="tiles">
+    <div class="tile"><span>Gelir</span><b class="num pos">${money(st.inc, false)}</b></div>
+    <div class="tile"><span>Gider</span><b class="num neg">${money(st.exp, false)}</b></div>
+    <div class="tile"><span>Fark</span><b class="num ${st.inc - st.exp >= 0 ? 'pos' : 'neg'}">${money(st.inc - st.exp, false)}</b></div>
+  </div>
+  <section class="card"><h3>Harcama dağılımı</h3>
+    ${st.exp ? `<div class="donut-wrap">
+      <div class="donut"><svg width="132" height="132" viewBox="0 0 132 132"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--chip)" stroke-width="16"/>${arcs}</svg>
+        <div class="c"><span>Toplam</span><b class="num">${money(st.exp, false)}</b></div></div>
+      <div class="legend">${segs.map(s => `<button class="r" ${s.id[0] !== '_' ? `data-action="cat-drill" data-id="${s.id}"` : ''}><i class="dot" style="background:${s.color}"></i><span class="n">${esc(s.emoji)} ${esc(s.name)}</span><span class="p num">%${Math.round(s.v / st.exp * 100)}</span></button>`).join('')}</div>
+    </div>` : '<div class="empty" style="padding:16px">Bu ay gider yok</div>'}
+  </section>
+  <section class="card"><h3>Son 6 ay</h3>
+    <div class="bars">${ms.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inc / maxV * 100}%"></i><i class="e" style="height:${x.exp / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
+    <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div>
+  </section>
+  <div class="sec-title">Son işlemler <a href="#" data-action="tab" data-tab="txs">Tümü</a></div>
+  ${recent.length ? `<div class="list">${recent.map(t => txRow(t)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
+};
+
+function welcome() {
+  return `<div class="welcome">
+    <div style="font-size:64px">👛</div>
+    <h2>Cüzdan'a hoş geldin</h2>
+    <p>Money Manager yedeğini (.mmbak) içe aktararak tüm hesaplarını, kategorilerini ve işlemlerini taşıyabilirsin.</p>
+    <button class="primary" data-action="import-mm">Money Manager yedeğini seç</button>
+    <button class="secondary" data-action="import-json">Cüzdan yedeğinden geri yükle</button>
+    <button class="secondary" data-action="add-acc">Sıfırdan başla</button>
+  </div>`;
+}
+
+VIEWS.accounts = () => {
+  const visible = S.accounts.filter(a => !a.hidden), hidden = S.accounts.filter(a => a.hidden);
+  const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
+  const accRow = (a, nested) => {
+    const v = D.bal.get(a.id) || 0, f = D.future.get(a.id) || 0;
+    const color = a.color || hashColor(a.id);
+    let sub = ACC_TYPES[a.type]?.replace(/lar[ıi]$|ler$/, '') || '';
+    if (a.type === 'card') sub = f ? `Gelecek taksitler ${money(Math.abs(f), false)}` : 'Kredi kartı';
+    if (a.type === 'bank') sub = 'Banka hesabı';
+    const meter = a.type === 'card' && a.limit ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -v / a.limit * 100))}%"></i></div>` : '';
+    return `<button class="row ${nested ? 'nested' : ''}" data-action="open-acc" data-id="${a.id}">
+      <div class="ic" style="background:${color}22;color:${color}">${ACC_ICON[a.type] || '👛'}</div>
+      <div class="t"><b>${esc(a.name)}</b><small>${esc(sub)}</small>${meter}</div>
+      <div class="a num ${v < -0.004 ? 'neg' : ''}">${money(v)}</div>${ICON.rowChev}</button>`;
+  };
+  const section = (title, list) => {
+    if (!list.length) return '';
+    const sum = list.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0);
+    return `<div class="sec-title">${title}<small class="num">${money(sum, false)}</small></div><div class="list">${list.map(x => Array.isArray(x) ? x.map((a, i) => accRow(a, i > 0)).join('') : accRow(x)).join('')}</div>`;
+  };
+  const cards = visible.filter(a => a.type === 'card');
+  const bankIds = new Set(visible.filter(a => a.type === 'bank').map(a => a.id));
+  // banks with their linked cards nested under them
+  const banks = visible.filter(a => a.type === 'bank').sort(byOrder).map(b => [b, ...cards.filter(c => c.parentId === b.id).sort(byOrder)]);
+  const sumOf = arr => arr.flat();
+  let html = `<header class="big"><h1>Hesaplar</h1><button class="icon-btn" data-action="add-acc" aria-label="Hesap ekle">${ICON.plus}</button></header>`;
+  if (!S.accounts.length) return html + '<div class="empty"><div class="big">🏦</div>Henüz hesap yok</div>';
+  html += `<section class="hero" style="padding:18px 20px"><div class="label">Net varlık</div><div class="big-amt num" style="margin-bottom:0">${money(D.assets + D.debts)}</div></section>`;
+  html += banks.length ? (() => { const flat = sumOf(banks); const sum = flat.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0); return `<div class="sec-title">Banka hesapları ve kartlar<small class="num">${money(sum, false)}</small></div><div class="list">${banks.map(g => g.map((a, i) => accRow(a, i > 0)).join('')).join('')}</div>`; })() : '';
+  html += section('Kredi kartları', cards.filter(c => !bankIds.has(c.parentId)).sort(byOrder));
+  for (const t of ['cash', 'ewallet', 'savings', 'invest', 'loan', 'insurance', 'other']) html += section(ACC_TYPES[t], visible.filter(a => a.type === t).sort(byOrder));
+  if (hidden.length) html += `<details class="hidden-accs"><summary class="sec-title">Gizli hesaplar (${hidden.length})<small>göster</small></summary><div class="list">${hidden.sort(byOrder).map(a => accRow(a)).join('')}</div></details>
+    <p class="note">Gizli hesaplar net varlık toplamına dahil edilmez.</p>`;
+  return html;
+};
+
+VIEWS.txs = () => {
+  const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter);
+  return `<header class="big"><h1>${a ? esc(a.name) : 'İşlemler'}</h1>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
+  ${a ? `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye</div><div class="big-amt num" style="margin-bottom:${D.future.get(a.id) ? '6px' : '0'}">${money(D.bal.get(a.id) || 0)}</div>${D.future.get(a.id) ? `<div class="label">Gelecek taksitler: ${money(Math.abs(D.future.get(a.id)))}</div>` : ''}</section>` : ''}
+  <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
+  ${(a || c) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)} ✕</button>` : ''}</div>` : ''}
+  <div id="month-wrap">${ui.q ? '' : monthSwitch()}</div>
+  <div id="txlist"></div>`;
+};
+function renderTxList() {
+  const q = ui.q.trim().toLocaleLowerCase('tr');
+  let list;
+  if (q) {
+    list = S.txs.filter(t => {
+      const hay = [t.note, t.memo, catPath(t.categoryId), accName(t.accountId), t.toAccountId && accName(t.toAccountId), String(t.amount).replace('.', ',')].join(' ').toLocaleLowerCase('tr');
+      return hay.includes(q);
+    }).sort(txSort);
+  } else list = D.byMonth.get(ui.month) || [];
+  if (ui.accFilter) list = list.filter(t => t.accountId === ui.accFilter || t.toAccountId === ui.accFilter);
+  if (ui.catFilter) list = list.filter(t => t.categoryId === ui.catFilter || D.cat.get(t.categoryId)?.parentId === ui.catFilter);
+  const total = list.length; list = list.slice(0, 400);
+  if (!list.length) { $('#txlist').innerHTML = '<div class="empty"><div class="big">🧾</div>İşlem bulunamadı</div>'; return; }
+  let html = '', day = null, buf = [];
+  const flush = () => {
+    if (!buf.length) return;
+    const net = buf.reduce((s, t) => s + (t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
+    html += `<div class="day"><span>${dayLabel(day)}</span><span class="num">${net ? (net > 0 ? '+' : '−') + money(Math.abs(net)) : ''}</span></div><div class="list">${buf.map(t => txRow(t, ui.accFilter)).join('')}</div>`;
+    buf = [];
+  };
+  for (const t of list) { if (t.date !== day) { flush(); day = t.date; } buf.push(t); }
+  flush();
+  if (total > list.length) html += `<p class="note" style="text-align:center">İlk ${list.length} sonuç gösteriliyor (${total} eşleşme)</p>`;
+  $('#txlist').innerHTML = html;
+}
+
+VIEWS.settings = () => {
+  const last = S.meta.lastBackup ? new Date(S.meta.lastBackup).toLocaleString('tr-TR', {dateStyle:'medium', timeStyle:'short'}) : 'hiç';
+  return `<header class="big"><h1>Ayarlar</h1></header>
+  <div class="tiles">
+    <div class="tile"><span>İşlem</span><b class="num">${S.txs.length.toLocaleString('tr-TR')}</b></div>
+    <div class="tile"><span>Hesap</span><b class="num">${S.accounts.length}</b></div>
+    <div class="tile"><span>Kategori</span><b class="num">${S.categories.length}</b></div>
+  </div>
+  <div class="sec-title">Düzenle</div>
+  <div class="list">
+    <button class="row" data-action="manage-cats"><div class="ic" style="background:#8E4EC622">🏷️</div><div class="t"><b>Kategoriler</b><small>Ekle, yeniden adlandır, gizle</small></div>${ICON.rowChev}</button>
+    <button class="row" data-action="add-acc"><div class="ic" style="background:#4C5BFF22">🏦</div><div class="t"><b>Yeni hesap</b><small>Banka, kart, nakit, kredi…</small></div>${ICON.rowChev}</button>
+  </div>
+  <div class="sec-title">Yedekleme</div>
+  <div class="list">
+    <button class="row" data-action="export-json"><div class="ic" style="background:#12A26B22">☁️</div><div class="t"><b>Yedek al</b><small>Son yedek: ${esc(last)}</small></div>${ICON.rowChev}</button>
+    <button class="row" data-action="import-json"><div class="ic" style="background:#0EA5E922">↩️</div><div class="t"><b>Yedekten geri yükle</b><small>Cüzdan .json dosyası</small></div>${ICON.rowChev}</button>
+    <button class="row" data-action="import-mm"><div class="ic" style="background:#F5A52422">📥</div><div class="t"><b>Money Manager'dan aktar</b><small>.mmbak yedeği, mevcut verinin yerine geçer</small></div>${ICON.rowChev}</button>
+  </div>
+  <p class="note">Veriler yalnızca bu cihazda saklanır. "Yedek al" dediğinde açılan menüden <b>Dosyalar'a Kaydet → iCloud Drive</b> seçerek yedeğini iCloud'a koyabilirsin.</p>
+  <div class="sec-title">Tehlikeli bölge</div>
+  <div class="list"><button class="row" data-action="wipe"><div class="ic" style="background:#E5484D22">🗑️</div><div class="t"><b class="danger">Tüm verileri sil</b></div></button></div>`;
+};
+
+/* ---------- sheets ---------- */
+let sheetState = null;
+function openSheet(html) { $('#sheet').innerHTML = '<div class="grab"></div>' + html; document.body.classList.add('sheet-open'); $('#sheet').scrollTop = 0; }
+function closeSheet() { document.body.classList.remove('sheet-open'); sheetState = null; }
+
+const accOptions = (sel, filter = () => true) => S.accounts.filter(a => (!a.hidden || a.id === sel) && filter(a))
+  .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+
+function txSheet(t) {
+  const lastAcc = ui.tab === 'txs' && ui.accFilter && D.acc.get(ui.accFilter) ? ui.accFilter : S.meta.lastAccount && D.acc.get(S.meta.lastAccount) ? S.meta.lastAccount : S.accounts.find(a => !a.hidden)?.id;
+  sheetState = t ? {...t, isNew:false} : {id:uid(), type:'expense', amount:'', accountId:lastAcc, toAccountId:null, categoryId:null, date:todayStr(), note:'', isNew:true};
+  if (typeof sheetState.amount === 'number') sheetState.amount = String(sheetState.amount).replace('.', ',');
+  const c = D.cat.get(sheetState.categoryId);
+  sheetState.catParent = c ? (c.parentId && D.cat.get(c.parentId) ? c.parentId : c.id) : null;
+  drawTxSheet();
+  if (!t) setTimeout(() => $('#f-amt')?.focus(), 350);
+}
+function drawTxSheet() {
+  const d = sheetState, kind = d.type === 'income' ? 'income' : 'expense';
+  const visibleCat = x => !x.hidden || x.id === d.categoryId || x.id === d.catParent;
+  const parents = S.categories.filter(x => x.kind === kind && !x.parentId && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const children = d.catParent ? S.categories.filter(x => x.parentId === d.catParent && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) : [];
+  const isAdj = d.type === 'adjust';
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
+    ${isAdj ? '' : `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>`}
+    <div class="amount"><input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
+    <div class="form">
+      <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId">${accOptions(d.accountId)}</select></div>
+      ${d.type === 'transfer' ? `<div class="field"><label>Nereye</label><select data-f="toAccountId"><option value="">Seç</option>${accOptions(d.toAccountId, a => a.id !== d.accountId)}</select></div>` : ''}
+      <div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>
+      <div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı"></div>
+    </div>
+    ${d.type === 'transfer' || isAdj ? '' : `
+      <div class="sub-label">Kategori</div>
+      <div class="cats">${parents.map(p => `<button class="chip ${d.catParent === p.id ? 'on' : ''}" data-action="pick-parent" data-id="${p.id}">${esc(p.emoji || '')} ${esc(p.name)}</button>`).join('')}</div>
+      ${children.length ? `<div class="sub-label">Alt kategori</div><div class="cats">${children.map(ch => `<button class="chip ${d.categoryId === ch.id ? 'on' : ''}" data-action="pick-cat" data-id="${ch.id}">${esc(ch.name)}</button>`).join('')}</div>` : ''}`}
+    ${d.isNew ? '' : '<button class="secondary danger" data-action="del-tx">İşlemi sil</button>'}
+  `);
+  sizeAmt();
+}
+function sizeAmt() { const i = $('#f-amt'); if (i) i.style.width = Math.max(1, (i.value || i.placeholder).length) * 0.62 + 0.3 + 'em'; }
+
+function accSheet(a) {
+  sheetState = a ? {...a, isNew:false} : {id:uid(), name:'', type:'bank', parentId:null, opening:0, limit:null, color:PALETTE[S.accounts.length % PALETTE.length], hidden:false, order:S.accounts.length, isNew:true};
+  const debtType = ['card', 'loan'].includes(sheetState.type);
+  sheetState.openingStr = sheetState.opening ? String(Math.abs(debtType ? -sheetState.opening : sheetState.opening)).replace('.', ',') : '';
+  drawAccSheet();
+}
+function drawAccSheet() {
+  const d = sheetState, debt = ['card', 'loan'].includes(d.type);
+  const used = !d.isNew && S.txs.some(t => t.accountId === d.id || t.toAccountId === d.id);
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isNew ? 'Yeni hesap' : 'Hesap'}</h2><button data-action="save-acc" style="font-weight:700">Kaydet</button></div>
+    <div class="form">
+      <div class="field"><label>Ad</label><input data-f="name" value="${esc(d.name)}" placeholder="Örn. Garanti Vadesiz"></div>
+      <div class="field"><label>Tür</label><select data-f="type" data-redraw="1">${Object.entries(ACC_TYPES).map(([k, l]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${l.replace(/ları$|leri$|lar$|ler$/, '')}</option>`).join('')}</select></div>
+      ${d.type === 'card' ? `<div class="field"><label>Bağlı banka</label><select data-f="parentId"><option value="">Yok</option>${accOptions(d.parentId, x => x.type === 'bank')}</select></div>
+      <div class="field"><label>Limit</label><input data-f="limitStr" inputmode="decimal" value="${d.limit ? String(d.limit).replace('.', ',') : ''}" placeholder="İsteğe bağlı"></div>` : ''}
+      <div class="field"><label>${debt ? 'Açılış borcu' : 'Açılış bakiyesi'}</label><input data-f="openingStr" inputmode="decimal" value="${esc(d.openingStr)}" placeholder="0"></div>
+      <div class="field"><label>Gizle</label><span style="flex:1;text-align:right;color:var(--muted);font-size:14px">Toplamlara dahil etme</span><input type="checkbox" data-f="hidden" ${d.hidden ? 'checked' : ''}></div>
+    </div>
+    <div class="form"><div class="swatches">${PALETTE.map(c => `<button style="background:${c}" class="${d.color === c ? 'on' : ''}" data-action="pick-color" data-c="${c}" aria-label="Renk"></button>`).join('')}</div></div>
+    ${d.isNew ? '' : `<button class="secondary danger" data-action="del-acc">${used ? 'Hesabı sil (işlemleri de silinir)' : 'Hesabı sil'}</button>`}
+  `);
+}
+
+function catsSheet() {
+  sheetState = {mode:'list', kind:'expense'};
+  drawCatsSheet();
+}
+function drawCatsSheet() {
+  const d = sheetState;
+  if (d.mode === 'list') {
+    const parents = S.categories.filter(c => c.kind === d.kind && !c.parentId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const row = (c, nested) => `<button class="row ${nested ? 'nested' : ''}" data-action="edit-cat" data-id="${c.id}" style="${c.hidden ? 'opacity:.45' : ''}"><div class="ic" style="background:${(c.color || '#64748B')}22">${esc(c.emoji || '•')}</div><div class="t"><b>${esc(c.name)}</b>${c.hidden ? '<small>Gizli</small>' : ''}</div>${ICON.rowChev}</button>`;
+    openSheet(`
+      <div class="sheet-head"><button data-action="close-sheet">Kapat</button><h2>Kategoriler</h2><button data-action="new-cat">Ekle</button></div>
+      <div class="seg">${[['expense', 'Gider'], ['income', 'Gelir']].map(([k, l]) => `<button class="${d.kind === k ? 'on' : ''}" data-action="cat-kind" data-v="${k}">${l}</button>`).join('')}</div>
+      ${parents.map(p => `<div class="list" style="margin-bottom:10px">${row(p)}${S.categories.filter(c => c.parentId === p.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(c => row(c, true)).join('')}</div>`).join('')}`);
+  } else {
+    const c = d.cat, parents = S.categories.filter(x => x.kind === c.kind && !x.parentId && x.id !== c.id);
+    const hasChildren = S.categories.some(x => x.parentId === c.id);
+    openSheet(`
+      <div class="sheet-head"><button data-action="cat-back">Geri</button><h2>${c.isNew ? 'Yeni kategori' : 'Kategori'}</h2><button data-action="save-cat" style="font-weight:700">Kaydet</button></div>
+      <div class="form">
+        <div class="field"><label>Ad</label><input data-cf="name" value="${esc(c.name)}"></div>
+        <div class="field"><label>Simge</label><input data-cf="emoji" value="${esc(c.emoji || '')}" placeholder="Emoji"></div>
+        ${hasChildren ? '' : `<div class="field"><label>Üst kategori</label><select data-cf="parentId"><option value="">Yok (ana kategori)</option>${parents.map(p => `<option value="${p.id}" ${c.parentId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`}
+        <div class="field"><label>Gizle</label><span style="flex:1"></span><input type="checkbox" data-cf="hidden" ${c.hidden ? 'checked' : ''}></div>
+      </div>
+      <p class="note">Gizlenen kategoriler eski işlemlerde görünmeye devam eder, yeni işlem eklerken listede çıkmaz.</p>`);
+  }
+}
+
+/* ---------- actions ---------- */
+const A = {
+  tab(el, e) { e?.preventDefault(); ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
+  month(el) { ui.month = shiftMonth(ui.month, +el.dataset.d); render(); },
+  'goto-month'(el) { ui.month = el.dataset.m; render(); },
+  'cat-drill'(el) { ui.catFilter = el.dataset.id; ui.accFilter = null; ui.tab = 'txs'; render(); window.scrollTo(0, 0); },
+  'open-acc'(el) { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
+  'clear-acc'() { ui.accFilter = null; render(); },
+  'clear-cat'() { ui.catFilter = null; render(); },
+  'close-sheet': closeSheet,
+  'add-tx'() { if (!S.accounts.length) { toast('Önce bir hesap ekle'); accSheet(); return; } txSheet(); },
+  'edit-tx'(el) { txSheet(S.txs.find(t => t.id === el.dataset.id)); },
+  'tx-type'(el) { sheetState.type = el.dataset.v; const c = D.cat.get(sheetState.categoryId); if (c && c.kind !== sheetState.type) { sheetState.categoryId = null; sheetState.catParent = null; } drawTxSheet(); },
+  'pick-parent'(el) { sheetState.catParent = el.dataset.id; sheetState.categoryId = el.dataset.id; drawTxSheet(); },
+  'pick-cat'(el) { sheetState.categoryId = el.dataset.id; drawTxSheet(); },
+  'save-tx'() {
+    const d = sheetState, amount = parseAmount(d.amount);
+    if (d.type === 'transfer') { if (!(amount > 0)) return toast('Tutar gir'); }
+    else if (isNaN(amount) || amount === 0) return toast('Tutar gir'); // negative expense = refund
+    if (!d.accountId) return toast('Hesap seç');
+    if (d.type === 'transfer' && (!d.toAccountId || d.toAccountId === d.accountId)) return toast('Hedef hesabı seç');
+    if ((d.type === 'expense' || d.type === 'income') && !d.categoryId) return toast('Kategori seç');
+    const t = {id:d.id, type:d.type, amount, accountId:d.accountId, toAccountId:d.type === 'transfer' ? d.toAccountId : null,
+      categoryId:d.type === 'transfer' || d.type === 'adjust' ? null : d.categoryId, date:d.date || todayStr(), note:(d.note || '').trim(), memo:d.memo || '', ts:d.ts || Date.now()};
+    const i = S.txs.findIndex(x => x.id === t.id);
+    if (i >= 0) S.txs[i] = t; else S.txs.push(t);
+    S.meta.lastAccount = t.accountId;
+    save(); closeSheet(); render(); toast(d.isNew ? 'İşlem eklendi' : 'Güncellendi');
+  },
+  'del-tx'() { if (!confirm('Bu işlem silinsin mi?')) return; S.txs = S.txs.filter(t => t.id !== sheetState.id); save(); closeSheet(); render(); toast('Silindi'); },
+  'add-acc'() { accSheet(); },
+  'edit-acc'(el) { accSheet(S.accounts.find(a => a.id === el.dataset.id)); },
+  'pick-color'(el) { sheetState.color = el.dataset.c; drawAccSheet(); },
+  'save-acc'() {
+    const d = sheetState; if (!d.name.trim()) return toast('Hesap adı gir');
+    const debt = ['card', 'loan'].includes(d.type);
+    const o = parseAmount(d.openingStr || '0') || 0;
+    const lim = d.type === 'card' ? parseAmount(d.limitStr ?? (d.limit ? String(d.limit) : '')) : NaN;
+    const a = {id:d.id, name:d.name.trim(), type:d.type, parentId:d.type === 'card' ? (d.parentId || null) : null,
+      opening:debt ? -Math.abs(o) : o, limit:isNaN(lim) ? null : lim, color:d.color, hidden:!!d.hidden, order:d.order ?? S.accounts.length};
+    const i = S.accounts.findIndex(x => x.id === a.id);
+    if (i >= 0) S.accounts[i] = a; else S.accounts.push(a);
+    save(); closeSheet(); render(); toast('Kaydedildi');
+  },
+  'del-acc'() {
+    const d = sheetState, n = S.txs.filter(t => t.accountId === d.id || t.toAccountId === d.id).length;
+    if (!confirm(n ? `"${d.name}" ve ona ait ${n} işlem kalıcı olarak silinecek. Emin misin?` : `"${d.name}" silinsin mi?`)) return;
+    S.txs = S.txs.filter(t => t.accountId !== d.id && t.toAccountId !== d.id);
+    S.accounts = S.accounts.filter(a => a.id !== d.id).map(a => a.parentId === d.id ? {...a, parentId:null} : a);
+    if (ui.accFilter === d.id) { ui.accFilter = null; }
+    save(); closeSheet(); render(); toast('Hesap silindi');
+  },
+  'manage-cats'() { catsSheet(); },
+  'cat-kind'(el) { sheetState.kind = el.dataset.v; drawCatsSheet(); },
+  'edit-cat'(el) { const c = S.categories.find(x => x.id === el.dataset.id); sheetState = {mode:'edit', kind:c.kind, cat:{...c}}; drawCatsSheet(); },
+  'new-cat'() { sheetState = {mode:'edit', kind:sheetState.kind, cat:{id:uid(), name:'', emoji:'', kind:sheetState.kind, parentId:null, color:PALETTE[S.categories.length % PALETTE.length], hidden:false, order:999, isNew:true}}; drawCatsSheet(); },
+  'cat-back'() { sheetState = {mode:'list', kind:sheetState.kind}; drawCatsSheet(); },
+  'save-cat'() {
+    const c = sheetState.cat; if (!c.name.trim()) return toast('Ad gir');
+    const {isNew, ...clean} = c; clean.name = c.name.trim(); clean.parentId = c.parentId || null;
+    if (!clean.color) clean.color = hashColor(clean.id);
+    const i = S.categories.findIndex(x => x.id === c.id); if (i >= 0) S.categories[i] = clean; else S.categories.push(clean);
+    save(); derive(); sheetState = {mode:'list', kind:c.kind}; drawCatsSheet(); render(); toast('Kaydedildi');
+  },
+  'import-mm'() { $('#file-mm').click(); },
+  'import-json'() { $('#file-json').click(); },
+  'export-json'() { exportJSON(); },
+  'wipe'() { if (!confirm('Tüm hesaplar, kategoriler ve işlemler bu cihazdan kalıcı olarak silinecek. Önce yedek almanı öneririm. Devam edilsin mi?')) return; S = emptyState(); save(); ui.tab = 'home'; render(); toast('Tüm veriler silindi'); }
+};
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-action]'); if (!el) return;
+  const f = A[el.dataset.action]; if (f) { if (el.tagName === 'A') e.preventDefault(); f(el, e); }
+});
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q ? '' : monthSwitch(); renderTxList(); return; }
+  if (!sheetState) return;
+  if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
+  if (el.id === 'f-amt') sizeAmt();
+  if (el.dataset.cf) { sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; }
+});
+document.addEventListener('change', e => {
+  const el = e.target; if (!sheetState) return;
+  if (el.dataset.f) {
+    sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
+    if (el.dataset.redraw) drawAccSheet();
+    if (el.dataset.f === 'accountId' && sheetState.type === 'transfer') drawTxSheet();
+  }
+  if (el.dataset.cf) sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value;
+});
+
+/* ---------- backup ---------- */
+async function exportJSON() {
+  S.meta.lastBackup = Date.now();
+  const name = `cuzdan-yedek-${todayStr()}.json`;
+  const blob = new Blob([JSON.stringify(S)], {type:'application/json'});
+  const file = new File([blob], name, {type:'application/json'});
+  try {
+    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title:'Cüzdan yedeği'}); }
+    else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+    save(); render(); toast('Yedek hazır');
+  } catch (err) { if (err.name !== 'AbortError') toast('Yedek alınamadı: ' + err.message); }
+}
+$('#file-json').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (!Array.isArray(data.accounts) || !Array.isArray(data.txs)) throw new Error('Bu bir Cüzdan yedeği değil');
+    if (S.txs.length && !confirm(`Mevcut veriler (${S.txs.length} işlem) bu yedekle değiştirilecek. Devam edilsin mi?`)) return;
+    S = {...emptyState(), ...data}; save(); ui.tab = 'home'; render(); toast(`${S.txs.length} işlem geri yüklendi`);
+  } catch (err) { toast('Yüklenemedi: ' + err.message); }
+});
+
+/* ---------- Money Manager (.mmbak) import ---------- */
+let sqlPromise;
+function loadSql() {
+  if (!sqlPromise) sqlPromise = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js';
+    s.onload = () => initSqlJs({locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}`}).then(res, rej);
+    s.onerror = () => { sqlPromise = null; rej(new Error('İçe aktarıcı yüklenemedi, internet bağlantını kontrol et')); };
+    document.head.appendChild(s);
+  });
+  return sqlPromise;
+}
+const CORE_DATA_EPOCH = 978307200; // 2001-01-01, Apple Core Data timestamps
+const MM_GROUPS = {'1':'bank', '2':'card', '3':'bank', '4':'savings', '5':'loan', '6':'ewallet', '7':'other', '8':'invest', '9':'loan', '10':'insurance', '11':'cash'};
+function groupType(uid, name) {
+  if (MM_GROUPS[uid]) return MM_GROUPS[uid];
+  const n = String(name || '').toLocaleLowerCase('tr');
+  if (n.includes('kredi kart')) return 'card'; if (n.includes('kredi')) return 'loan'; if (n.includes('nakit')) return 'cash';
+  if (n.includes('banka')) return 'bank'; if (n.includes('tasarruf') || n.includes('birikim')) return 'savings';
+  if (n.includes('yatırım')) return 'invest'; if (n.includes('elektronik')) return 'ewallet'; if (n.includes('sigorta')) return 'insurance';
+  return 'other';
+}
+async function importMM(file) {
+  const SQL = await loadSql();
+  const db = new SQL.Database(new Uint8Array(await file.arrayBuffer()));
+  const rows = sql => { const r = db.exec(sql); if (!r.length) return []; const {columns, values} = r[0]; return values.map(v => Object.fromEntries(columns.map((c, i) => [c, v[i]]))); };
+  const tables = new Set(rows("select name from sqlite_master where type='table'").map(r => r.name));
+  if (!tables.has('ZINOUTCOME') || !tables.has('ZASSET')) throw new Error('Bu dosya bir Money Manager yedeği gibi görünmüyor');
+  const active = 'coalesce(ZISDEL,0)=0';
+  const groups = new Map(rows('select ZUID, ZASSETGROUPNAME from ZASSETGROUP').map(g => [String(g.ZUID), g.ZASSETGROUPNAME]));
+  const accounts = rows('select ZUID, ZNICNAME, ZGROUPUID, ZISDEL, ZCARDASSETUID, ZORDER from ZASSET').map(a => {
+    const id = 'mm-' + a.ZUID, type = groupType(String(a.ZGROUPUID), groups.get(String(a.ZGROUPUID)));
+    return {id, name:String(a.ZNICNAME || 'Hesap').trim(), type, parentId:a.ZCARDASSETUID ? 'mm-' + a.ZCARDASSETUID : null,
+      opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), hidden:(+a.ZISDEL || 0) !== 0, order:a.ZORDER ?? 0}; // MM: 0 = active, 1 = hidden, 3 = closed; all keep their history
+
+  });
+  const accIds = new Set(accounts.map(a => a.id));
+  for (const a of accounts) if (a.parentId && !accIds.has(a.parentId)) a.parentId = null;
+  const txRows = rows(`select ZUID, ZDO_TYPE, ZAMOUNT, ZASSETUID, ZTOASSETUID, ZCATEGORYUID, ZTXDATESTR, ZDATE, ZCONTENT, ZMEMO from ZINOUTCOME where ${active} and ZDO_TYPE in ('0','1','3','7','8')`);
+  const usedCats = new Set(txRows.map(t => String(t.ZCATEGORYUID)));
+  let ci = 0;
+  const cats = rows('select ZUID, ZNAME, ZPUID, ZDOTYPE, ZISDEL, ZORDER from ZCATEGORY').filter(c => c.ZISDEL !== 1 || usedCats.has(String(c.ZUID)) ).map(c => ({
+    id:'mm-' + c.ZUID, name:String(c.ZNAME || '').trim(), kind:String(c.ZDOTYPE) === '0' ? 'income' : 'expense',
+    parentId:c.ZPUID && c.ZPUID !== '0' ? 'mm-' + c.ZPUID : null, emoji:guessEmoji(c.ZNAME), hidden:c.ZISDEL === 1, order:c.ZORDER ?? ci++, color:null
+  }));
+  const catIds = new Set(cats.map(c => c.id));
+  for (const c of cats) if (c.parentId && !catIds.has(c.parentId)) c.parentId = null;
+  // children hidden only matters for picker; color top-level categories from palette in order
+  for (const kind of ['expense', 'income']) cats.filter(c => !c.parentId && c.kind === kind && !c.hidden).sort((a, b) => a.order - b.order).forEach((c, i) => c.color = CAT_COLORS[i % CAT_COLORS.length]);
+  for (const c of cats) if (!c.parentId && !c.color) c.color = '#94A3B8';
+  for (const c of cats) if (!c.color) c.color = cats.find(p => p.id === c.parentId)?.color || '#64748B';
+  const txs = [];
+  for (const r of txRows) {
+    const accId = 'mm-' + r.ZASSETUID; if (!accIds.has(accId)) continue;
+    const ty = String(r.ZDO_TYPE), amt = Math.round(Math.abs(+r.ZAMOUNT || 0) * 100) / 100;
+    const ts = r.ZDATE ? Math.round((+r.ZDATE + CORE_DATA_EPOCH) * 1000) : 0;
+    let date = r.ZTXDATESTR; if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) { const d = new Date(ts); date = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+    const base = {id:'mm-' + r.ZUID, amount:amt, accountId:accId, toAccountId:null, categoryId:null, date, ts, note:String(r.ZCONTENT || '').trim(), memo:String(r.ZMEMO || '').trim()};
+    // income/expense keep their sign: a negative expense is a refund (iade)
+    if (ty === '0' || ty === '1') { base.type = ty === '0' ? 'income' : 'expense'; base.amount = Math.round((+r.ZAMOUNT || 0) * 100) / 100; const cid = 'mm-' + r.ZCATEGORYUID; base.categoryId = catIds.has(cid) ? cid : null; }
+    else if (ty === '3') { const to = 'mm-' + r.ZTOASSETUID; if (!accIds.has(to)) continue; base.type = 'transfer'; base.toAccountId = to; }
+    else { base.type = 'adjust'; base.amount = ty === '7' ? amt : -amt; if (base.note === 'Bakiye Farkı') base.note = ''; }
+    txs.push(base);
+  }
+  db.close();
+  return {version:1, accounts, categories:cats, txs, meta:{importedAt:Date.now(), source:file.name}};
+}
+$('#file-mm').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  if (S.txs.length && !confirm(`Mevcut veriler (${S.txs.length} işlem) Money Manager yedeğiyle değiştirilecek. Devam edilsin mi?`)) return;
+  $('#loading').classList.add('on');
+  try {
+    const data = await importMM(f);
+    S = {...emptyState(), ...data, meta:{...S.meta, ...data.meta}};
+    await DB.set('state', S);
+    ui.tab = 'home'; ui.month = curMonth(); render();
+    toast(`${data.accounts.length} hesap, ${data.categories.length} kategori, ${data.txs.length.toLocaleString('tr-TR')} işlem aktarıldı`);
+  } catch (err) { console.error(err); toast('Aktarılamadı: ' + err.message); }
+  finally { $('#loading').classList.remove('on'); }
+});
+
+/* ---------- boot ---------- */
+(async () => {
+  try { const st = await DB.get('state'); if (st) S = {...emptyState(), ...st}; } catch (e) { toast('Veritabanı açılamadı'); }
+  render();
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
