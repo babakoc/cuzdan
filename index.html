@@ -58,6 +58,16 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .tile span{font-size:12px;color:var(--muted);font-weight:600}
 .tile b{display:block;font-size:16px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pos{color:var(--pos)} .neg{color:var(--neg)}
+.hero-row b+span{margin-top:3px;font-size:11px;opacity:.75}
+.hero-row em{font-style:normal;font-weight:700}
+.hero-row em.late{color:#FF8A8D}
+.hero-btn{display:block;width:100%;height:44px;border-radius:14px;background:rgba(255,255,255,.16);color:#fff;font-weight:700;margin-top:12px}
+.hero-hint{display:block;color:#fff;opacity:.8;font-weight:600;font-size:14px;text-align:left}
+.back{display:flex;align-items:center;gap:2px;color:var(--accent);font-weight:600;font-size:16px;margin:0 0 4px -4px}
+.row-actions{display:flex;gap:8px;padding:0 14px 12px 62px}
+.row-actions button{flex:1;height:36px;border-radius:10px;background:var(--chip);font-weight:650;font-size:14px}
+.row-actions button.on{background:var(--accent);color:#fff}
+.empty p{margin:0 0 20px;line-height:1.5}
 
 .card{background:var(--card);border-radius:22px;padding:16px;box-shadow:var(--shadow);margin-top:14px}
 .card h3,.sec-title{margin:0 0 12px;font-size:17px;font-weight:700;letter-spacing:-.01em}
@@ -202,6 +212,14 @@ const shiftMonth = (m, n) => { let [y, mo] = m.split('-').map(Number); mo += n; 
 const parseD = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const monthLabel = m => parseD(m + '-01').toLocaleDateString('tr-TR', {month:'long', year:'numeric'});
 const monthShort = m => parseD(m + '-01').toLocaleDateString('tr-TR', {month:'short'});
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const dim = (y, m) => new Date(y, m, 0).getDate(); // m is 1-based
+// builds a date, rolling months over and clamping the day (31 -> 30/28) so "every 31st" works in short months
+const mkDate = (y, m, d) => { while (m < 1) { m += 12; y--; } while (m > 12) { m -= 12; y++; } return `${y}-${pad(m)}-${pad(Math.min(d, dim(y, m)))}`; };
+const addDays = (s, n) => { const d = parseD(s); d.setDate(d.getDate() + n); return ymd(d); };
+const shortDate = s => parseD(s).toLocaleDateString('tr-TR', {day:'numeric', month:'short'});
+const daysUntil = s => Math.round((parseD(s) - parseD(todayStr())) / 864e5);
+const relDay = s => { const n = daysUntil(s); if (n === 0) return 'Bugün'; if (n === 1) return 'Yarın'; if (n < 0) return `${-n} gün gecikti`; if (n < 7) return `${n} gün sonra`; return shortDate(s); };
 const dayLabel = s => {
   const t = todayStr(), y = new Date(); y.setDate(y.getDate() - 1);
   const ys = `${y.getFullYear()}-${pad(y.getMonth()+1)}-${pad(y.getDate())}`;
@@ -238,7 +256,7 @@ const DB = {
   async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 };
-const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], meta:{}});
+const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], meta:{}});
 let S = emptyState();
 let saveTimer;
 function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => DB.set('state', S).catch(e => toast('Kaydedilemedi: ' + e.message)), 150); }
@@ -270,6 +288,99 @@ const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 
 const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
 const catPath = id => { const c = D.cat.get(id); if (!c) return 'Kategorisiz'; const p = c.parentId && D.cat.get(c.parentId); return p ? `${p.name} › ${c.name}` : c.name; };
 const accName = id => { const a = D.acc.get(id); return !a ? 'Silinmiş hesap' : a.deleted ? `${a.name} (silinmiş)` : a.name; };
+/* ---------- credit card cycle ---------- */
+function balAt(id, date) {
+  let v = +(D.acc.get(id)?.opening) || 0;
+  for (const t of S.txs) {
+    if (t.date > date) continue;
+    if (t.accountId === id) v += (t.type === 'income' || t.type === 'adjust') ? t.amount : -t.amount;
+    if (t.type === 'transfer' && t.toAccountId === id) v += t.amount;
+  }
+  return v;
+}
+// Statement = card debt on the last closing day. Whatever was paid in since then is deducted;
+// the rest is due on the due day. Spending after the closing day goes to the next statement.
+function cardCycle(a) {
+  const sd = +a.statementDay, pd = +a.dueDay;
+  if (a.type !== 'card' || !sd || !pd) return null;
+  const t = D.today, [y, m] = t.split('-').map(Number);
+  let close = mkDate(y, m, sd); if (close > t) close = mkDate(y, m - 1, sd);
+  const [cy, cm] = close.split('-').map(Number);
+  const due = pd > sd ? mkDate(cy, cm, pd) : mkDate(cy, cm + 1, pd);
+  const nextClose = mkDate(cy, cm + 1, sd);
+  const nextDue = pd > sd ? mkDate(cy, cm + 1, pd) : mkDate(cy, cm + 2, pd);
+  const statement = Math.max(0, -balAt(a.id, close));
+  let paid = 0;
+  for (const x of S.txs) {
+    if (x.date <= close || x.date > t) continue;
+    if (x.type === 'transfer' && x.toAccountId === a.id) paid += x.amount;
+    else if (x.type === 'income' && x.accountId === a.id) paid += x.amount;
+  }
+  const dueNow = Math.max(0, Math.round((statement - paid) * 100) / 100);
+  const next = Math.max(0, Math.round((-balAt(a.id, nextClose) - dueNow) * 100) / 100);
+  return {close, due, nextClose, nextDue, statement, paid, dueNow, next};
+}
+
+/* ---------- recurring ---------- */
+const FREQ = {monthly:'Her ay', weekly:'Her hafta', yearly:'Her yıl'};
+function nextOcc(r, from) {
+  if (r.freq === 'weekly') return addDays(from, 7);
+  const [y, m] = from.split('-').map(Number);
+  return r.freq === 'yearly' ? mkDate(y + 1, m, r.anchorDay) : mkDate(y, m + 1, r.anchorDay);
+}
+const firstOcc = (r, floor) => { let d = r.startDate, g = 0; while (d < floor && g++ < 5000) d = nextOcc(r, d); return d; };
+const ruleActive = r => !r.paused && (!r.endDate || r.nextDate <= r.endDate);
+function ruleDesc(r) {
+  const d = parseD(r.startDate);
+  if (r.freq === 'weekly') return 'Her ' + d.toLocaleDateString('tr-TR', {weekday:'long'});
+  if (r.freq === 'yearly') return 'Her yıl ' + d.toLocaleDateString('tr-TR', {day:'numeric', month:'long'});
+  return `Her ayın ${r.anchorDay}. günü`;
+}
+const ruleTx = (r, date) => ({id:uid(), type:r.type, amount:r.amount, accountId:r.accountId, toAccountId:r.type === 'transfer' ? r.toAccountId : null,
+  categoryId:r.type === 'transfer' ? null : r.categoryId, date, note:r.note || '', memo:'', ts:Date.now(), recurringId:r.id});
+// adds every automatic occurrence that has come due; runs on open and when the app returns to the foreground
+function runRecurring() {
+  const t = todayStr(); let n = 0;
+  for (const r of S.rules || []) {
+    if (!r.auto) continue;
+    let g = 0;
+    while (ruleActive(r) && r.nextDate <= t && g++ < 400) { S.txs.push(ruleTx(r, r.nextDate)); r.nextDate = nextOcc(r, r.nextDate); n++; }
+  }
+  if (n) save();
+  return n;
+}
+const pendingRules = () => (S.rules || []).filter(r => !r.auto && ruleActive(r) && r.nextDate <= todayStr());
+function ruleLook(r) {
+  const isT = r.type === 'transfer', c = D.cat.get(r.categoryId), tc = topCat(r.categoryId);
+  return {icon:isT ? '⇄' : (c?.emoji || tc?.emoji || '•'), color:isT ? '#64748B' : (tc?.color || '#64748B'),
+    title:r.note || (isT ? 'Transfer' : c?.name || 'Kategorisiz'),
+    acc:isT ? `${accName(r.accountId)} → ${accName(r.toAccountId)}` : accName(r.accountId)};
+}
+function upcoming(days) {
+  const t = todayStr(), lim = addDays(t, days), out = [];
+  for (const a of S.accounts) {
+    if (a.type !== 'card' || a.deleted) continue;
+    const c = cardCycle(a);
+    if (c && c.dueNow > 0.004) out.push({date:c.due, action:`data-action="open-acc" data-id="${a.id}"`, icon:'💳', color:a.color || hashColor(a.id), title:`${a.name} ekstresi`, sub:'Kredi kartı', amount:-c.dueNow});
+  }
+  for (const r of S.rules || []) {
+    if (!ruleActive(r)) continue;
+    const L = ruleLook(r); let d = r.nextDate, g = 0;
+    while (d <= lim && (!r.endDate || d <= r.endDate) && g++ < 60) {
+      out.push({date:d, action:`data-action="edit-rule" data-id="${r.id}"`, icon:L.icon, color:L.color, title:L.title, sub:L.acc, amount:r.type === 'income' ? r.amount : -r.amount, transfer:r.type === 'transfer'});
+      d = nextOcc(r, d);
+    }
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+function upRow(u) {
+  const late = daysUntil(u.date) < 0;
+  const amt = u.transfer ? money(Math.abs(u.amount)) : (u.amount >= 0 ? '+' : '−') + money(Math.abs(u.amount));
+  return `<button class="row" ${u.action}><div class="ic" style="background:${u.color}22;color:${u.color}">${esc(u.icon)}</div>
+    <div class="t"><b>${esc(u.title)}</b><small>${esc(u.sub)}</small></div>
+    <div class="a num ${u.amount > 0 && !u.transfer ? 'pos' : ''}">${amt}<small class="${late ? 'neg' : ''}">${relDay(u.date)}</small></div></button>`;
+}
+
 function monthStats(m) {
   let inc = 0, exp = 0; const cats = new Map();
   for (const t of D.byMonth.get(m) || []) {
@@ -316,7 +427,7 @@ function txRow(t, ctxAcc) {
     const v = t.type === 'income' ? t.amount : -t.amount; // refunds are negative expenses
     amt = (v >= 0 ? '+' : '−') + money(Math.abs(v)); cls = v >= 0 ? 'pos' : '';
   }
-  const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '');
+  const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${esc(icon)}</div>
     <div class="t"><b>${esc(title)}${planned}</b><small>${esc(sub)}</small></div>
@@ -365,6 +476,9 @@ VIEWS.home = () => {
     <div class="bars">${ms.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inc / maxV * 100}%"></i><i class="e" style="height:${x.exp / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
     <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div>
   </section>
+  ${(() => { const up = upcoming(30), pend = pendingRules().length;
+    if (!up.length && !pend) return `<div class="sec-title">Yaklaşan ödemeler</div><button class="list row" data-action="tab" data-tab="recurring"><div class="ic" style="background:#12A26B22">🔁</div><div class="t"><b>Tekrarlayan işlem ekle</b><small>Kira, maaş, abonelik, fatura…</small></div>${ICON.rowChev}</button>`;
+    return `<div class="sec-title">Yaklaşan ödemeler <a href="#" data-action="tab" data-tab="recurring">Tekrarlayanlar${pend ? ` (${pend})` : ''}</a></div><div class="list">${up.slice(0, 6).map(upRow).join('')}</div>`; })()}
   <div class="sec-title">Son işlemler <a href="#" data-action="tab" data-tab="txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
 };
@@ -388,7 +502,11 @@ VIEWS.accounts = () => {
     const v = D.bal.get(a.id) || 0, f = D.future.get(a.id) || 0;
     const color = a.color || hashColor(a.id);
     let sub = ACC_TYPES[a.type]?.replace(/lar[ıi]$|ler$/, '') || '';
-    if (a.type === 'card') sub = f ? `Gelecek taksitler ${money(Math.abs(f), false)}` : 'Kredi kartı';
+    if (a.type === 'card') {
+      const c = cardCycle(a);
+      sub = c ? (c.dueNow > 0.004 ? `Ödenecek ${money(c.dueNow, false)} · ${relDay(c.due)}` : `Sonraki kesim ${shortDate(c.nextClose)}`)
+        : f ? `Gelecek taksitler ${money(Math.abs(f), false)}` : 'Kredi kartı';
+    }
     if (a.type === 'bank') sub = 'Banka hesabı';
     const meter = a.type === 'card' && a.limit ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -v / a.limit * 100))}%"></i></div>` : '';
     return `<button class="row ${nested ? 'nested' : ''}" data-action="open-acc" data-id="${a.id}">
@@ -420,12 +538,29 @@ VIEWS.accounts = () => {
 VIEWS.txs = () => {
   const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter);
   return `<header class="big"><h1>${a ? esc(a.name) : 'İşlemler'}</h1>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
-  ${a ? `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye</div><div class="big-amt num" style="margin-bottom:${D.future.get(a.id) ? '6px' : '0'}">${money(D.bal.get(a.id) || 0)}</div>${D.future.get(a.id) ? `<div class="label">Gelecek taksitler: ${money(Math.abs(D.future.get(a.id)))}</div>` : ''}</section>` : ''}
+  ${a ? accHero(a) : ''}
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)} ✕</button>` : ''}</div>` : ''}
   <div id="month-wrap">${ui.q ? '' : monthSwitch()}</div>
   <div id="txlist"></div>`;
 };
+function accHero(a) {
+  const bal = D.bal.get(a.id) || 0, fut = D.future.get(a.id) || 0, isCard = a.type === 'card';
+  let h = `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye</div><div class="big-amt num" style="margin-bottom:${isCard || fut ? '12px' : '0'}">${money(bal)}</div>`;
+  if (isCard) {
+    const c = cardCycle(a);
+    if (c) {
+      const late = c.dueNow > 0.004 && daysUntil(c.due) < 0;
+      const st = c.dueNow <= 0.004 ? (c.statement > 0.004 ? '✓ Ödendi' : 'Borç yok') : relDay(c.due);
+      h += `<div class="hero-row">
+        <div><span>Bu dönem ödenecek</span><b class="num">${money(c.dueNow)}</b><span>Son ödeme ${shortDate(c.due)} · <em class="${late ? 'late' : ''}">${st}</em></span></div>
+        <div><span>Gelecek ekstre</span><b class="num">${money(c.next)}</b><span>Kesim ${shortDate(c.nextClose)} · Ödeme ${shortDate(c.nextDue)}</span></div></div>`;
+      if (c.dueNow > 0.004) h += `<button class="hero-btn" data-action="pay-card" data-id="${a.id}" data-amt="${c.dueNow}">Borcu öde</button>`;
+    } else h += `<button class="hero-hint" data-action="edit-acc" data-id="${a.id}">Kesim ve son ödeme günlerini ekle →</button>`;
+    if (fut) h += `<div class="label" style="margin-top:12px">Gelecek taksitler toplamı: ${money(Math.abs(fut))}</div>`;
+  } else if (fut) h += `<div class="label">Planlı işlemler: ${money(fut)}</div>`;
+  return h + '</section>';
+}
 function renderTxList() {
   const q = ui.q.trim().toLocaleLowerCase('tr');
   let list;
@@ -452,6 +587,35 @@ function renderTxList() {
   $('#txlist').innerHTML = html;
 }
 
+VIEWS.recurring = () => {
+  const rules = (S.rules || []).slice().sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+  const pend = pendingRules(), pendIds = new Set(pend.map(r => r.id));
+  const live = rules.filter(r => ruleActive(r) && !pendIds.has(r.id)), done = rules.filter(r => !ruleActive(r));
+  const perMonth = r => r.freq === 'weekly' ? r.amount * 52 / 12 : r.freq === 'yearly' ? r.amount / 12 : r.amount;
+  const act = rules.filter(ruleActive);
+  const fixedExp = act.filter(r => r.type === 'expense').reduce((s, r) => s + perMonth(r), 0);
+  const fixedInc = act.filter(r => r.type === 'income').reduce((s, r) => s + perMonth(r), 0);
+  const row = (r, pending) => {
+    const L = ruleLook(r), sign = r.type === 'income' ? '+' : r.type === 'transfer' ? '' : '−';
+    const when = !ruleActive(r) ? (r.paused ? 'Duraklatıldı' : 'Bitti') : pending ? `${shortDate(r.nextDate)} · onay bekliyor` : `Sonraki: ${relDay(r.nextDate)}`;
+    return `<button class="row" data-action="edit-rule" data-id="${r.id}" style="${ruleActive(r) ? '' : 'opacity:.5'}">
+      <div class="ic" style="background:${L.color}22;color:${L.color}">${esc(L.icon)}</div>
+      <div class="t"><b>${esc(L.title)}${r.auto ? '' : '<span class="badge">Elle onay</span>'}</b><small>${esc(ruleDesc(r))} · ${esc(L.acc)}</small></div>
+      <div class="a num ${r.type === 'income' ? 'pos' : ''}">${sign}${money(r.amount)}<small>${when}</small></div></button>
+      ${pending ? `<div class="row-actions"><button data-action="rule-skip" data-id="${r.id}">Bu sefer atla</button><button class="on" data-action="rule-post" data-id="${r.id}">Ekle</button></div>` : ''}`;
+  };
+  let html = `<header class="big"><div><button class="back" data-action="back">${ICON.chevL}Geri</button><h1>Tekrarlayanlar</h1></div><button class="icon-btn" data-action="add-rule" aria-label="Tekrarlayan işlem ekle">${ICON.plus}</button></header>`;
+  if (!rules.length) return html + `<div class="empty"><div class="big">🔁</div><p>Kira, maaş, abonelik, fatura, kredi taksiti gibi düzenli işlemlerini bir kez tanımla. Zamanı gelince kendiliğinden eklensin ya da senin onayını beklesin.</p><button class="primary" data-action="add-rule">İlk tekrarlayan işlemi ekle</button></div>`;
+  html += `<div class="tiles">
+    <div class="tile"><span>Sabit gider /ay</span><b class="num neg">${money(fixedExp, false)}</b></div>
+    <div class="tile"><span>Sabit gelir /ay</span><b class="num pos">${money(fixedInc, false)}</b></div>
+    <div class="tile"><span>Aktif</span><b class="num">${act.length}</b></div></div>`;
+  if (pend.length) html += `<div class="sec-title">Onay bekleyenler<small>${pend.length}</small></div><div class="list">${pend.map(r => row(r, true)).join('')}</div>`;
+  if (live.length) html += `<div class="sec-title">Aktif</div><div class="list">${live.map(r => row(r)).join('')}</div>`;
+  if (done.length) html += `<div class="sec-title">Biten ve duraklatılan</div><div class="list">${done.map(r => row(r)).join('')}</div>`;
+  return html + `<p class="note">"Otomatik" olanlar zamanı gelince kendiliğinden eklenir. "Elle onay" olanlar tutarı değişebilen işlemler içindir (fatura gibi); zamanı gelince burada onayını bekler.</p>`;
+};
+
 VIEWS.settings = () => {
   const last = S.meta.lastBackup ? new Date(S.meta.lastBackup).toLocaleString('tr-TR', {dateStyle:'medium', timeStyle:'short'}) : 'hiç';
   return `<header class="big"><h1>Ayarlar</h1></header>
@@ -462,6 +626,7 @@ VIEWS.settings = () => {
   </div>
   <div class="sec-title">Düzenle</div>
   <div class="list">
+    <button class="row" data-action="tab" data-tab="recurring"><div class="ic" style="background:#12A26B22">🔁</div><div class="t"><b>Tekrarlayan işlemler</b><small>${(S.rules || []).filter(ruleActive).length} aktif${pendingRules().length ? ` · ${pendingRules().length} onay bekliyor` : ''}</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="manage-cats"><div class="ic" style="background:#8E4EC622">🏷️</div><div class="t"><b>Kategoriler</b><small>Ekle, yeniden adlandır, gizle</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="add-acc"><div class="ic" style="background:#4C5BFF22">🏦</div><div class="t"><b>Yeni hesap</b><small>Banka, kart, nakit, kredi…</small></div>${ICON.rowChev}</button>
   </div>
@@ -484,8 +649,39 @@ function closeSheet() { document.body.classList.remove('sheet-open'); sheetState
 const accOptions = (sel, filter = () => true) => S.accounts.filter(a => ((!a.hidden && !a.deleted) || a.id === sel) && filter(a))
   .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 
+const defaultAcc = () => { const l = D.acc.get(S.meta.lastAccount); return l && !l.deleted && !l.hidden ? l.id : S.accounts.find(a => !a.hidden && !a.deleted)?.id; };
+function setCatParent() { const c = D.cat.get(sheetState.categoryId); sheetState.catParent = c ? (c.parentId && D.cat.get(c.parentId) ? c.parentId : c.id) : null; }
+function ruleSheet(r) {
+  sheetState = r ? {...r, amount:String(r.amount).replace('.', ','), endDate:r.endDate || '', isNew:false, isRule:true}
+    : {id:uid(), type:'expense', amount:'', accountId:defaultAcc(), toAccountId:null, categoryId:null, note:'', freq:'monthly', startDate:todayStr(), endDate:'', auto:true, paused:false, isNew:true, isRule:true};
+  setCatParent(); drawTxSheet();
+}
+function saveRule() {
+  const d = sheetState, amount = parseAmount(d.amount);
+  if (!(amount > 0)) return toast('Tutar gir');
+  if (!d.accountId) return toast('Hesap seç');
+  if (d.type === 'transfer' && (!d.toAccountId || d.toAccountId === d.accountId)) return toast('Hedef hesabı seç');
+  if (d.type !== 'transfer' && !d.categoryId) return toast('Kategori seç');
+  if (!d.startDate) return toast('Başlangıç tarihi seç');
+  if (d.endDate && d.endDate < d.startDate) return toast('Bitiş tarihi başlangıçtan önce olamaz');
+  S.rules = S.rules || [];
+  const old = S.rules.find(x => x.id === d.id);
+  const r = {id:d.id, type:d.type, amount, accountId:d.accountId, toAccountId:d.type === 'transfer' ? d.toAccountId : null,
+    categoryId:d.type === 'transfer' ? null : d.categoryId, note:(d.note || '').trim(), freq:d.freq, startDate:d.startDate,
+    anchorDay:+d.startDate.slice(8), endDate:d.endDate || null, auto:!!d.auto, paused:!!d.paused};
+  if (old && old.startDate === r.startDate && old.freq === r.freq) r.nextDate = old.nextDate;
+  else {
+    // past occurrences are never back-filled: the first one is today or later (and after anything already generated)
+    const made = S.txs.filter(t => t.recurringId === r.id).reduce((m, t) => t.date > m ? t.date : m, '');
+    const today = todayStr();
+    r.nextDate = firstOcc(r, made >= today ? addDays(made, 1) : today);
+  }
+  if (old) Object.assign(old, r); else S.rules.push(r);
+  const n = runRecurring(); save(); closeSheet(); render();
+  toast(n ? `Kaydedildi, bugünkü işlem eklendi` : `Kaydedildi · ilk işlem ${shortDate(r.nextDate)}`);
+}
 function txSheet(t) {
-  const lastAcc = ui.tab === 'txs' && ui.accFilter && D.acc.get(ui.accFilter) ? ui.accFilter : S.meta.lastAccount && D.acc.get(S.meta.lastAccount) ? S.meta.lastAccount : S.accounts.find(a => !a.hidden)?.id;
+  const lastAcc = ui.tab === 'txs' && ui.accFilter && D.acc.get(ui.accFilter) ? ui.accFilter : defaultAcc();
   sheetState = t ? {...t, isNew:false} : {id:uid(), type:'expense', amount:'', accountId:lastAcc, toAccountId:null, categoryId:null, date:todayStr(), note:'', isNew:true};
   if (typeof sheetState.amount === 'number') sheetState.amount = String(sheetState.amount).replace('.', ',');
   const c = D.cat.get(sheetState.categoryId);
@@ -500,20 +696,28 @@ function drawTxSheet() {
   const children = d.catParent ? S.categories.filter(x => x.parentId === d.catParent && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) : [];
   const isAdj = d.type === 'adjust';
   openSheet(`
-    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isRule ? (d.isNew ? 'Yeni tekrar' : 'Tekrarlayan') : d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
     ${isAdj ? '' : `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>`}
     <div class="amount"><input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
     <div class="form">
       <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId">${accOptions(d.accountId)}</select></div>
       ${d.type === 'transfer' ? `<div class="field"><label>Nereye</label><select data-f="toAccountId"><option value="">Seç</option>${accOptions(d.toAccountId, a => a.id !== d.accountId)}</select></div>` : ''}
-      <div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>
+      ${d.isRule ? `
+      <div class="field"><label>Sıklık</label><select data-f="freq">${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.freq === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label>Başlangıç</label><input type="date" data-f="startDate" value="${d.startDate}"></div>
+      <div class="field"><label>Bitiş</label><input type="date" data-f="endDate" value="${d.endDate || ''}" placeholder="Süresiz"></div>
+      <div class="field"><label>Otomatik ekle</label><span style="flex:1;text-align:right;color:var(--muted);font-size:13px">Kapalıysa onayını bekler</span><input type="checkbox" data-f="auto" ${d.auto ? 'checked' : ''}></div>
+      ${d.isNew ? '' : `<div class="field"><label>Duraklat</label><span style="flex:1"></span><input type="checkbox" data-f="paused" ${d.paused ? 'checked' : ''}></div>`}`
+      : `<div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>`}
       <div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı"></div>
     </div>
     ${d.type === 'transfer' || isAdj ? '' : `
       <div class="sub-label">Kategori</div>
       <div class="cats">${parents.map(p => `<button class="chip ${d.catParent === p.id ? 'on' : ''}" data-action="pick-parent" data-id="${p.id}">${esc(p.emoji || '')} ${esc(p.name)}</button>`).join('')}</div>
       ${children.length ? `<div class="sub-label">Alt kategori</div><div class="cats">${children.map(ch => `<button class="chip ${d.categoryId === ch.id ? 'on' : ''}" data-action="pick-cat" data-id="${ch.id}">${esc(ch.name)}</button>`).join('')}</div>` : ''}`}
-    ${d.isNew ? '' : '<button class="secondary danger" data-action="del-tx">İşlemi sil</button>'}
+    ${d.isRule ? `<p class="note">Ayın 29–31'i gibi günler kısa aylarda ayın son gününe kayar. Geçmiş tarihli tekrarlar geriye dönük eklenmez.</p>` : ''}
+    ${d.isNew ? '' : `<button class="secondary danger" data-action="del-tx">${d.isRule ? 'Tekrarı sil (eklenmiş işlemler kalır)' : 'İşlemi sil'}</button>`}
+    ${!d.isRule && !d.isNew && d.recurringId ? '<p class="note" style="text-align:center">Bu işlem bir tekrarlayan işlemden oluşturuldu. Burada değiştirmek yalnızca bu kaydı etkiler.</p>' : ''}
   `);
   sizeAmt();
 }
@@ -534,7 +738,9 @@ function drawAccSheet() {
       <div class="field"><label>Ad</label><input data-f="name" value="${esc(d.name)}" placeholder="Örn. Garanti Vadesiz"></div>
       <div class="field"><label>Tür</label><select data-f="type" data-redraw="1">${Object.entries(ACC_TYPES).map(([k, l]) => `<option value="${k}" ${d.type === k ? 'selected' : ''}>${l.replace(/ları$|leri$|lar$|ler$/, '')}</option>`).join('')}</select></div>
       ${d.type === 'card' ? `<div class="field"><label>Bağlı banka</label><select data-f="parentId"><option value="">Yok</option>${accOptions(d.parentId, x => x.type === 'bank')}</select></div>
-      <div class="field"><label>Limit</label><input data-f="limitStr" inputmode="decimal" value="${d.limit ? String(d.limit).replace('.', ',') : ''}" placeholder="İsteğe bağlı"></div>` : ''}
+      <div class="field"><label>Limit</label><input data-f="limitStr" inputmode="decimal" value="${d.limit ? String(d.limit).replace('.', ',') : ''}" placeholder="İsteğe bağlı"></div>
+      <div class="field"><label>Kesim günü</label><input data-f="statementDay" inputmode="numeric" value="${d.statementDay || ''}" placeholder="Ayın kaçı, örn. 29"></div>
+      <div class="field"><label>Son ödeme</label><input data-f="dueDay" inputmode="numeric" value="${d.dueDay || ''}" placeholder="Ayın kaçı, örn. 7"></div>` : ''}
       <div class="field"><label>${debt ? 'Açılış borcu' : 'Açılış bakiyesi'}</label><input data-f="openingStr" inputmode="decimal" value="${esc(d.openingStr)}" placeholder="0"></div>
       <div class="field"><label>Gizle</label><span style="flex:1;text-align:right;color:var(--muted);font-size:14px">Toplamlara dahil etme</span><input type="checkbox" data-f="hidden" ${d.hidden ? 'checked' : ''}></div>
     </div>
@@ -573,7 +779,20 @@ function drawCatsSheet() {
 
 /* ---------- actions ---------- */
 const A = {
-  tab(el, e) { e?.preventDefault(); ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
+  back() { ui.tab = ui.prevTab && ui.prevTab !== 'recurring' ? ui.prevTab : 'settings'; render(); window.scrollTo(0, 0); },
+  'add-rule'() { if (!S.accounts.length) return toast('Önce bir hesap ekle'); ruleSheet(); },
+  'edit-rule'(el) { ruleSheet(S.rules.find(r => r.id === el.dataset.id)); },
+  'rule-post'(el) { const r = S.rules.find(x => x.id === el.dataset.id); S.txs.push(ruleTx(r, r.nextDate)); r.nextDate = nextOcc(r, r.nextDate); save(); render(); toast('İşlem eklendi'); },
+  'rule-skip'(el) { const r = S.rules.find(x => x.id === el.dataset.id); r.nextDate = nextOcc(r, r.nextDate); save(); render(); toast('Bu seferlik atlandı'); },
+  'pay-card'(el) {
+    const a = D.acc.get(el.dataset.id), amt = Math.round(+el.dataset.amt * 100) / 100;
+    const live = x => x && !x.deleted && !x.hidden;
+    const from = live(D.acc.get(a.parentId)) ? a.parentId : S.accounts.find(x => x.type === 'bank' && live(x))?.id;
+    txSheet();
+    Object.assign(sheetState, {type:'transfer', accountId:from || sheetState.accountId, toAccountId:a.id, amount:String(amt).replace('.', ','), note:`${a.name} ekstre ödemesi`, categoryId:null, catParent:null});
+    drawTxSheet();
+  },
+  tab(el, e) { e?.preventDefault(); if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
   month(el) { ui.month = shiftMonth(ui.month, +el.dataset.d); render(); },
   'goto-month'(el) { ui.month = el.dataset.m; render(); },
   'cat-drill'(el) { ui.catFilter = el.dataset.id; ui.accFilter = null; ui.tab = 'txs'; render(); window.scrollTo(0, 0); },
@@ -587,6 +806,7 @@ const A = {
   'pick-parent'(el) { sheetState.catParent = el.dataset.id; sheetState.categoryId = el.dataset.id; drawTxSheet(); },
   'pick-cat'(el) { sheetState.categoryId = el.dataset.id; drawTxSheet(); },
   'save-tx'() {
+    if (sheetState.isRule) return saveRule();
     const d = sheetState, amount = parseAmount(d.amount);
     if (d.type === 'transfer') { if (!(amount > 0)) return toast('Tutar gir'); }
     else if (isNaN(amount) || amount === 0) return toast('Tutar gir'); // negative expense = refund
@@ -595,12 +815,18 @@ const A = {
     if ((d.type === 'expense' || d.type === 'income') && !d.categoryId) return toast('Kategori seç');
     const t = {id:d.id, type:d.type, amount, accountId:d.accountId, toAccountId:d.type === 'transfer' ? d.toAccountId : null,
       categoryId:d.type === 'transfer' || d.type === 'adjust' ? null : d.categoryId, date:d.date || todayStr(), note:(d.note || '').trim(), memo:d.memo || '', ts:d.ts || Date.now()};
+    if (d.recurringId) t.recurringId = d.recurringId;
     const i = S.txs.findIndex(x => x.id === t.id);
     if (i >= 0) S.txs[i] = t; else S.txs.push(t);
     S.meta.lastAccount = t.accountId;
     save(); closeSheet(); render(); toast(d.isNew ? 'İşlem eklendi' : 'Güncellendi');
   },
-  'del-tx'() { if (!confirm('Bu işlem silinsin mi?')) return; S.txs = S.txs.filter(t => t.id !== sheetState.id); save(); closeSheet(); render(); toast('Silindi'); },
+  'del-tx'() {
+    if (sheetState.isRule) {
+      if (!confirm('Bu tekrarlayan işlem silinsin mi? Daha önce eklenmiş işlemler yerinde kalır.')) return;
+      S.rules = S.rules.filter(r => r.id !== sheetState.id); save(); closeSheet(); render(); toast('Tekrar silindi'); return;
+    }
+    if (!confirm('Bu işlem silinsin mi?')) return; S.txs = S.txs.filter(t => t.id !== sheetState.id); save(); closeSheet(); render(); toast('Silindi'); },
   'add-acc'() { accSheet(); },
   'edit-acc'(el) { accSheet(S.accounts.find(a => a.id === el.dataset.id)); },
   'pick-color'(el) { sheetState.color = el.dataset.c; drawAccSheet(); },
@@ -609,8 +835,12 @@ const A = {
     const debt = ['card', 'loan'].includes(d.type);
     const o = parseAmount(d.openingStr || '0') || 0;
     const lim = d.type === 'card' ? parseAmount(d.limitStr ?? (d.limit ? String(d.limit) : '')) : NaN;
-    const a = {id:d.id, name:d.name.trim(), type:d.type, parentId:d.type === 'card' ? (d.parentId || null) : null,
-      opening:debt ? -Math.abs(o) : o, limit:isNaN(lim) ? null : lim, color:d.color, hidden:!!d.hidden, order:d.order ?? S.accounts.length};
+    const day = v => { const n = parseInt(v, 10); return n >= 1 && n <= 31 ? n : null; };
+    const isCard = d.type === 'card';
+    if (isCard && (String(d.statementDay ?? '').trim() || String(d.dueDay ?? '').trim()) && (!day(d.statementDay) || !day(d.dueDay))) return toast('Kesim ve son ödeme günü 1–31 arası olmalı');
+    const a = {...(S.accounts.find(x => x.id === d.id) || {}), id:d.id, name:d.name.trim(), type:d.type, parentId:isCard ? (d.parentId || null) : null,
+      opening:debt ? -Math.abs(o) : o, limit:isNaN(lim) ? null : lim, color:d.color, hidden:!!d.hidden, order:d.order ?? S.accounts.length,
+      statementDay:isCard ? day(d.statementDay) : null, dueDay:isCard ? day(d.dueDay) : null};
     const i = S.accounts.findIndex(x => x.id === a.id);
     if (i >= 0) S.accounts[i] = a; else S.accounts.push(a);
     save(); closeSheet(); render(); toast('Kaydedildi');
@@ -619,6 +849,7 @@ const A = {
     const d = sheetState, n = S.txs.filter(t => t.accountId === d.id || t.toAccountId === d.id).length;
     if (!confirm(n ? `"${d.name}" ve ona ait ${n} işlem kalıcı olarak silinecek. Emin misin?` : `"${d.name}" silinsin mi?`)) return;
     S.txs = S.txs.filter(t => t.accountId !== d.id && t.toAccountId !== d.id);
+    S.rules = (S.rules || []).filter(r => r.accountId !== d.id && r.toAccountId !== d.id);
     S.accounts = S.accounts.filter(a => a.id !== d.id).map(a => a.parentId === d.id ? {...a, parentId:null} : a);
     if (ui.accFilter === d.id) { ui.accFilter = null; }
     save(); closeSheet(); render(); toast('Hesap silindi');
@@ -714,11 +945,13 @@ async function importMM(file) {
   if (!tables.has('ZINOUTCOME') || !tables.has('ZASSET')) throw new Error('Bu dosya bir Money Manager yedeği gibi görünmüyor');
   const active = 'coalesce(ZISDEL,0)=0';
   const groups = new Map(rows('select ZUID, ZASSETGROUPNAME from ZASSETGROUP').map(g => [String(g.ZUID), g.ZASSETGROUPNAME]));
-  const accounts = rows('select ZUID, ZNICNAME, ZGROUPUID, ZISDEL, ZCARDASSETUID, ZORDER from ZASSET').map(a => {
+  const accounts = rows('select ZUID, ZNICNAME, ZGROUPUID, ZISDEL, ZCARDASSETUID, ZORDER, ZCARD_DAYFIN, ZCARD_DAYPAY from ZASSET').map(a => {
     const id = 'mm-' + a.ZUID, type = groupType(String(a.ZGROUPUID), groups.get(String(a.ZGROUPUID)));
     return {id, name:String(a.ZNICNAME || 'Hesap').trim(), type, parentId:a.ZCARDASSETUID ? 'mm-' + a.ZCARDASSETUID : null,
       opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), // MM: 0 = active; any other value = deleted by the user (MM no longer shows it, but its transactions still count)
-      deleted:(+a.ZISDEL || 0) !== 0, hidden:false, order:a.ZORDER ?? 0};
+      deleted:(+a.ZISDEL || 0) !== 0, hidden:false, order:a.ZORDER ?? 0,
+      // MM: ZCARD_DAYFIN = statement (kesim) day, ZCARD_DAYPAY = payment due day
+      statementDay:type === 'card' ? (parseInt(a.ZCARD_DAYFIN, 10) || null) : null, dueDay:type === 'card' ? (parseInt(a.ZCARD_DAYPAY, 10) || null) : null};
 
   });
   const accIds = new Set(accounts.map(a => a.id));
@@ -754,11 +987,16 @@ async function importMM(file) {
 }
 $('#file-mm').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  if (S.txs.length && !confirm(`Mevcut veriler (${S.txs.length} işlem) Money Manager yedeğiyle değiştirilecek. Devam edilsin mi?`)) return;
+  if (S.txs.length && !confirm(`Mevcut hesaplar, kategoriler ve işlemler (${S.txs.length}) Money Manager yedeğiyle değiştirilecek. Tekrarlayan işlem tanımların ve onlardan oluşan kayıtlar korunur. Devam edilsin mi?`)) return;
   $('#loading').classList.add('on');
   try {
     const data = await importMM(f);
-    S = {...emptyState(), ...data, meta:{...S.meta, ...data.meta}};
+    // keep recurring rules (and what they generated) whose accounts still exist in the backup
+    const ids = new Set(data.accounts.map(a => a.id));
+    const rules = (S.rules || []).filter(r => ids.has(r.accountId) && (!r.toAccountId || ids.has(r.toAccountId)));
+    const keep = new Set(rules.map(r => r.id));
+    data.txs.push(...S.txs.filter(t => keep.has(t.recurringId)));
+    S = {...emptyState(), ...data, rules, meta:{...S.meta, ...data.meta}};
     await DB.set('state', S);
     ui.tab = 'home'; ui.month = curMonth(); render();
     toast(`${data.accounts.length} hesap, ${data.categories.length} kategori, ${data.txs.length.toLocaleString('tr-TR')} işlem aktarıldı`);
@@ -769,7 +1007,16 @@ $('#file-mm').addEventListener('change', async e => {
 /* ---------- boot ---------- */
 (async () => {
   try { const st = await DB.get('state'); if (st) S = {...emptyState(), ...st}; } catch (e) { toast('Veritabanı açılamadı'); }
+  const n = runRecurring();
   render();
+  if (n) toast(`${n} tekrarlayan işlem eklendi`);
+  // a PWA can stay open for days: re-check due items whenever it comes back to the foreground
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || sheetState) return;
+    const k = runRecurring();
+    if (k || D?.today !== todayStr()) render();
+    if (k) toast(`${k} tekrarlayan işlem eklendi`);
+  });
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 </script>
