@@ -1,4 +1,4 @@
-const CACHE = 'cuzdan-v9';
+const CACHE = 'cuzdan-v10';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));

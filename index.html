@@ -88,6 +88,12 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .crop-frame img{position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-select:none;pointer-events:none}
 .crop-zoom{display:flex;align-items:center;gap:12px;padding:0 12px;color:var(--muted);font-weight:700}
 .crop-zoom input{flex:1;accent-color:var(--accent)}
+.link-lines{margin-top:12px;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.link-lines div{display:flex;justify-content:space-between;background:rgba(255,255,255,.08);border-radius:10px;padding:7px 10px}
+.link-lines span{opacity:.75}
+.row.inst.done{opacity:.6}
+.pay-btn{padding:7px 14px;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:14px}
+.paid{color:var(--pos);font-weight:650;font-size:14px}
 .sub-label.between{display:flex;justify-content:space-between;align-items:center}
 .sub-label button{color:var(--accent);font-weight:600;text-transform:none;letter-spacing:0;font-size:14px}
 
@@ -292,7 +298,7 @@ const DB = {
   async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 };
-const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], icons:{}, meta:{}});
+const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], loans:[], icons:{}, meta:{}});
 
 /* ---------- icons ----------
    An icon value is either an emoji or "img:<id>", pointing at an uploaded picture in S.icons.
@@ -409,7 +415,9 @@ function derive() {
   for (const l of byMonth.values()) l.sort(txSort);
   let assets = 0, debts = 0;
   for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
-  D = {acc, cat, bal, future, byMonth, assets, debts, today};
+  let loanDebt = 0; for (const l of S.loans || []) loanDebt += loanState(l).remaining;
+  debts -= loanDebt;
+  D = {acc, cat, bal, future, byMonth, assets, debts, loanDebt, today};
 }
 const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
 const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
@@ -486,6 +494,8 @@ function ruleLook(r) {
 }
 function upcoming(days) {
   const t = todayStr(), lim = addDays(t, days), out = [];
+  for (const l of S.loans || []) for (const r of loanState(l).rows) if (!r.paid && r.date <= lim)
+    out.push({date:r.date, action:`data-action="open-loan" data-id="${l.id}"`, icon:l.icon || '🏦', color:LINKS.loan.color, title:`${l.name} ${r.i + 1}/${l.count}. taksit`, sub:l.auto ? 'Otomatik ödeme' : 'Kredi taksiti', amount:-r.amount});
   for (const a of S.accounts) {
     if (a.type !== 'card' || a.deleted) continue;
     const c = cardCycle(a);
@@ -509,13 +519,66 @@ function upRow(u) {
     <div class="a num ${u.amount > 0 && !u.transfer ? 'pos' : ''}">${amt}<small class="${late ? 'neg' : ''}">${relDay(u.date)}</small></div></button>`;
 }
 
+/* ---------- linked groups ----------
+   Kredi, Yatırım and Borç each have an income and an expense category that belong together: buying gold
+   (expense) and selling it (income) net out, and the net is the gain or loss. They still count in the
+   regular income/expense totals; the group view adds the net on top. */
+const LINKS = {loan:{name:'Kredi', emoji:'🏦', color:'#E5484D'}, invest:{name:'Yatırım', emoji:'📈', color:'#12A26B'}, debt:{name:'Borç', emoji:'🤝', color:'#F5A524'}};
+function linkOf(catId) { let c = D?.cat.get(catId) || S.categories.find(x => x.id === catId), g = 0; while (c && g++ < 5) { if (c.link) return c.link; c = S.categories.find(x => x.id === c.parentId); } return null; }
+// every group needs one income and one expense category: adopt one with the group's name, else create it
+function ensureLinks() {
+  const tr = v => String(v || '').trim().toLocaleLowerCase('tr');
+  for (const [key, L] of Object.entries(LINKS)) for (const kind of ['income', 'expense']) {
+    if (S.categories.some(c => c.kind === kind && c.link === key)) continue;
+    const named = S.categories.filter(c => c.kind === kind && tr(c.name) === tr(L.name)).sort((a, b) => (!!a.parentId - !!b.parentId) || (!!a.hidden - !!b.hidden))[0];
+    if (named) { named.link = key; named.hidden = false; }
+    else S.categories.push({id:`cz-${key}-${kind}`, name:L.name, kind, parentId:null, emoji:L.emoji, color:L.color, hidden:false, order:900, link:key});
+  }
+}
+const linkCat = (key, kind) => S.categories.find(c => c.kind === kind && c.link === key)?.id || null;
+function linkTotals(key, list = S.txs) {
+  let inn = 0, out = 0;
+  for (const t of list) { if ((t.type !== 'income' && t.type !== 'expense') || linkOf(t.categoryId) !== key) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
+  return {in:inn, out};
+}
+
+/* ---------- loans ----------
+   A loan is its disbursement (income, Kredi) plus a schedule of installments. An installment is paid when
+   an expense transaction (Kredi) points at it; unpaid installments count as debt in the net worth. */
+const r2 = v => Math.round(v * 100) / 100;
+function loanSchedule(l) {
+  const [y, m, d] = l.firstDue.split('-').map(Number), out = [];
+  for (let i = 0; i < l.count; i++) out.push({i, date:mkDate(y, m + i, d), amount:l.installment});
+  return out;
+}
+function loanState(l) {
+  const paid = new Map(); for (const t of S.txs) if (t.loanId === l.id && t.type === 'expense' && t.inst != null) paid.set(t.inst, t);
+  const rows = loanSchedule(l).map(r => ({...r, tx:paid.get(r.i) || null, pre:r.i < (l.paidBefore || 0)}));
+  for (const r of rows) r.paid = !!r.tx || r.pre;
+  const open = rows.filter(r => !r.paid), t = todayStr();
+  return {rows, remaining:r2(open.reduce((s, r) => s + r.amount, 0)), paidCount:rows.length - open.length, next:open[0] || null, overdue:open.filter(r => r.date < t).length};
+}
+function payInstallment(l, r, date) {
+  S.txs.push({id:uid(), type:'expense', amount:r.amount, accountId:l.payFrom || l.accountId, toAccountId:null, categoryId:linkCat('loan', 'expense'),
+    date, note:`${l.name} · ${r.i + 1}/${l.count}. taksit`, memo:'', ts:Date.now(), loanId:l.id, inst:r.i});
+}
+function runLoans() { // auto-pay: installments that came due are paid from the payment account on their due date
+  const t = todayStr(); let n = 0;
+  for (const l of S.loans || []) { if (!l.auto) continue; for (const r of loanState(l).rows) if (!r.paid && r.date <= t) { payInstallment(l, r, r.date); n++; } }
+  if (n) save();
+  return n;
+}
+
 function monthStats(m) {
-  let inc = 0, exp = 0; const cats = new Map();
+  let inc = 0, exp = 0; const cats = new Map(), linked = {};
   for (const t of D.byMonth.get(m) || []) {
+    if (t.type !== 'income' && t.type !== 'expense') continue;
+    const lk = linkOf(t.categoryId);
+    if (lk) { const o = linked[lk] = linked[lk] || {in:0, out:0}; if (t.type === 'income') o.in += t.amount; else o.out += t.amount; } // also counted below, like any income/expense
     if (t.type === 'income') inc += t.amount;
     else if (t.type === 'expense') { exp += t.amount; const c = topCat(t.categoryId); const k = c?.id || '_'; cats.set(k, (cats.get(k) || 0) + t.amount); }
   }
-  return {inc, exp, cats};
+  return {inc, exp, cats, linked};
 }
 
 /* ---------- ui state ---------- */
@@ -607,6 +670,7 @@ VIEWS.home = () => {
   ${(() => { const up = upcoming(30), pend = pendingRules().length;
     if (!up.length && !pend) return `<div class="sec-title">Yaklaşan ödemeler</div><button class="list row" data-action="tab" data-tab="recurring"><div class="ic" style="background:#12A26B22">🔁</div><div class="t"><b>Tekrarlayan işlem ekle</b><small>Kira, maaş, abonelik, fatura…</small></div>${ICON.rowChev}</button>`;
     return `<div class="sec-title">Yaklaşan ödemeler <a href="#" data-action="tab" data-tab="recurring">Tekrarlayanlar${pend ? ` (${pend})` : ''}</a></div><div class="list">${up.slice(0, 6).map(upRow).join('')}</div>`; })()}
+  ${linkCard(st)}
   <div class="sec-title">Son işlemler <a href="#" data-action="tab" data-tab="txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
 };
@@ -622,6 +686,20 @@ function welcome() {
   </div>`;
 }
 
+function linkCard(st) {
+  const rows = Object.entries(LINKS).map(([k, L]) => {
+    const all = linkTotals(k), cur = st.linked[k] || {in:0, out:0}, debt = k === 'loan' ? D.loanDebt : 0;
+    if (!all.in && !all.out && !debt) return '';
+    const net = all.in - all.out;
+    const sub = (cur.in || cur.out) ? `Bu dönem +${money(cur.in, false)} / −${money(cur.out, false)}` : 'Bu dönem hareket yok';
+    return `<button class="row" data-action="open-link" data-k="${k}"><div class="ic" style="background:${L.color}22;color:${L.color}">${L.emoji}</div>
+      <div class="t"><b>${L.name}</b><small>${esc(sub)}</small></div>
+      <div class="a num ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${money(Math.abs(net), false)}<small>${k === 'loan' && debt ? `Kalan borç ${money(debt, false)}` : 'Gelen − giden'}</small></div>${ICON.rowChev}</button>`;
+  }).join('');
+  if (!rows) return '';
+  return `<div class="sec-title">Kredi · Yatırım · Borç</div><div class="list">${rows}</div>
+    <p class="note">Bu gruplarda gelir ve gider birbirine bağlıdır; burada her grubun net sonucu görünür. Hareketler yukarıdaki aylık gelir/gider toplamlarında da yer alır.</p>`;
+}
 VIEWS.accounts = () => {
   const live = S.accounts.filter(a => !a.deleted);
   const visible = live.filter(a => !a.hidden), hidden = live.filter(a => a.hidden);
@@ -657,21 +735,48 @@ VIEWS.accounts = () => {
   html += `<section class="hero" style="padding:18px 20px"><div class="label">Net varlık</div><div class="big-amt num" style="margin-bottom:0">${money(D.assets + D.debts)}</div></section>`;
   html += banks.length ? (() => { const flat = sumOf(banks); const sum = flat.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0); return `<div class="sec-title">Banka hesapları ve kartlar<small class="num">${money(sum, false)}</small></div><div class="list">${banks.map(g => g.map((a, i) => accRow(a, i > 0)).join('')).join('')}</div>`; })() : '';
   html += section('Kredi kartları', cards.filter(c => !bankIds.has(c.parentId)).sort(byOrder));
-  for (const t of ['cash', 'ewallet', 'savings', 'invest', 'loan', 'insurance', 'other']) html += section(ACC_TYPES[t], visible.filter(a => a.type === t).sort(byOrder));
+  for (const t of ['cash', 'ewallet', 'savings', 'invest', 'insurance', 'other']) html += section(ACC_TYPES[t], visible.filter(a => a.type === t).sort(byOrder));
+  { // loans: the schedule-based ones plus any balance-based loan accounts
+    const accs = visible.filter(a => a.type === 'loan').sort(byOrder), loans = S.loans || [];
+    const sum = -D.loanDebt + accs.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0);
+    const lrow = l => { const st = loanState(l);
+      const sub = st.overdue ? `${st.overdue} taksit gecikti` : st.next ? `${st.paidCount}/${l.count} ödendi · sonraki ${relDay(st.next.date)}` : 'Tamamı ödendi ✓';
+      return `<button class="row" data-action="open-loan" data-id="${l.id}"><div class="ic" style="background:${LINKS.loan.color}22;color:${LINKS.loan.color}">${ico(l.icon || '🏦')}</div>
+        <div class="t"><b>${esc(l.name)}</b><small class="${st.overdue ? 'neg' : ''}">${esc(sub)}</small><div class="meter"><i style="width:${st.paidCount / l.count * 100}%;background:${LINKS.loan.color}"></i></div></div>
+        <div class="a num ${st.remaining ? 'neg' : ''}">${money(-st.remaining)}</div>${ICON.rowChev}</button>`; };
+    html += `<div class="sec-title">Krediler<small class="num">${money(sum, false)}</small></div><div class="list">${loans.map(lrow).join('')}${accs.map(a => accRow(a)).join('')}
+      <button class="row" data-action="add-loan"><div class="ic" style="background:var(--chip);color:var(--accent);font-size:20px">＋</div><div class="t"><b style="color:var(--accent);font-weight:600">Kredi ekle</b><small>Taksit planıyla birlikte</small></div></button></div>`;
+  }
   if (hidden.length) html += `<details class="hidden-accs"><summary class="sec-title">Gizli hesaplar (${hidden.length})<small>göster</small></summary><div class="list">${hidden.sort(byOrder).map(a => accRow(a)).join('')}</div></details>
     <p class="note">Gizli hesaplar net varlık toplamına dahil edilmez.</p>`;
   return html;
 };
 
 VIEWS.txs = () => {
-  const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter);
-  return `<header class="big"><h1>${a ? esc(a.name) : 'İşlemler'}</h1>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
-  ${a ? accHero(a) : ''}
+  const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter), L = ui.linkFilter && LINKS[ui.linkFilter];
+  return `<header class="big"><h1>${a ? esc(a.name) : L ? L.name : 'İşlemler'}</h1>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
+  ${a ? accHero(a) : ''}${L ? linkHero(ui.linkFilter) : ''}
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)} ✕</button>` : ''}</div>` : ''}
-  <div id="month-wrap">${ui.q ? '' : monthSwitch()}</div>
+  <div id="month-wrap">${ui.q || ui.linkFilter ? '' : monthSwitch()}</div>
   <div id="txlist"></div>`;
 };
+function linkHero(k) {
+  const L = LINKS[k], all = linkTotals(k), net = all.in - all.out;
+  // per-name breakdown, so "Yatırım › Altın" bought and sold nets out on its own line
+  const by = new Map();
+  for (const t of S.txs) { if ((t.type !== 'income' && t.type !== 'expense') || linkOf(t.categoryId) !== k) continue;
+    const c = D.cat.get(t.categoryId), name = c && !c.link ? c.name : 'Genel'; const o = by.get(name) || {in:0, out:0};
+    if (t.type === 'income') o.in += t.amount; else o.out += t.amount; by.set(name, o); }
+  const lines = [...by.entries()].sort((a, b) => (b[1].in + b[1].out) - (a[1].in + a[1].out)).slice(0, 6);
+  const words = k === 'loan' ? ['Çekilen', 'Ödenen'] : k === 'invest' ? ['Satış / gelen', 'Alış / giden'] : ['Gelen', 'Giden'];
+  return `<section class="hero" style="padding:18px 20px"><div class="label">${k === 'invest' ? 'Toplam kâr / zarar (gelen − giden)' : 'Net (gelen − giden)'}</div>
+    <div class="big-amt num" style="margin-bottom:12px">${net >= 0 ? '+' : '−'}${money(Math.abs(net))}</div>
+    <div class="hero-row"><div><span>${words[0]}</span><b class="num">${money(all.in, false)}</b></div><div><span>${words[1]}</span><b class="num">${money(all.out, false)}</b></div></div>
+    ${k === 'loan' && D.loanDebt ? `<div class="label" style="margin-top:12px">Ödenmemiş taksitler: ${money(D.loanDebt)}</div>` : ''}
+    ${lines.length > 1 ? `<div class="link-lines">${lines.map(([n, o]) => `<div><span>${esc(n)}</span><b class="num">${o.in - o.out >= 0 ? '+' : '−'}${money(Math.abs(o.in - o.out), false)}</b></div>`).join('')}</div>` : ''}
+    ${k === 'invest' ? '<div class="label" style="margin-top:10px;opacity:.6">Eksi değer, henüz satılmamış yatırımın tutarı da olabilir.</div>' : ''}</section>`;
+}
 function accHero(a) {
   const bal = D.bal.get(a.id) || 0, fut = D.future.get(a.id) || 0, isCard = a.type === 'card';
   let h = `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye</div><div class="big-amt num" style="margin-bottom:${isCard || fut ? '12px' : '0'}">${money(bal)}</div>`;
@@ -697,7 +802,9 @@ function renderTxList() {
       const hay = [t.note, t.memo, catPath(t.categoryId), accName(t.accountId), t.toAccountId && accName(t.toAccountId), String(t.amount).replace('.', ',')].join(' ').toLocaleLowerCase('tr');
       return hay.includes(q);
     }).sort(txSort);
-  } else list = D.byMonth.get(ui.month) || [];
+  } else if (ui.linkFilter) list = S.txs.filter(t => (t.type === 'income' || t.type === 'expense') && linkOf(t.categoryId) === ui.linkFilter).sort(txSort);
+  else list = D.byMonth.get(ui.month) || [];
+  if (q && ui.linkFilter) list = list.filter(t => linkOf(t.categoryId) === ui.linkFilter);
   if (ui.accFilter) list = list.filter(t => t.accountId === ui.accFilter || t.toAccountId === ui.accFilter);
   if (ui.catFilter) list = list.filter(t => t.categoryId === ui.catFilter || D.cat.get(t.categoryId)?.parentId === ui.catFilter);
   const total = list.length; list = list.slice(0, 400);
@@ -822,6 +929,7 @@ function txSheet(t) {
 function iconCtx() {
   const d = sheetState;
   if (d.mode === 'edit') return {cur:d.cat.emoji || '', def:null, set:v => { d.cat.emoji = v; }, redraw:drawCatsSheet};
+  if (d.isLoan) return {cur:d.icon || '', def:'🏦', defLabel:'Varsayılan simge', set:v => { d.icon = v || null; }, redraw:drawLoanSheet};
   if (d.isAcc) return {cur:d.icon || '', def:ACC_ICON[d.type] || '👛', defLabel:'Hesap türünün simgesi', set:v => { d.icon = v || null; }, redraw:drawAccSheet};
   const c = D.cat.get(d.categoryId), tc = topCat(d.categoryId);
   return {cur:d.icon || '', def:d.type === 'transfer' ? '⇄' : (c?.emoji || tc?.emoji || '•'), set:v => { d.icon = v || null; }, redraw:drawTxSheet};
@@ -870,6 +978,7 @@ function drawTxSheet() {
       ${children.length ? `<div class="sub-label">Alt kategori</div><div class="cats">${children.map(ch => `<button class="chip ${d.categoryId === ch.id ? 'on' : ''}" data-action="pick-cat" data-id="${ch.id}">${esc(ch.name)}</button>`).join('')}</div>` : ''}`}
     ${d.isRule ? `<p class="note">Ayın 29–31'i gibi günler kısa aylarda ayın son gününe kayar. Geçmiş tarihli tekrarlar geriye dönük eklenmez.</p>` : ''}
     ${d.isNew ? '' : `<button class="secondary danger" data-action="del-tx">${d.isRule ? 'Tekrarı sil (eklenmiş işlemler kalır)' : 'İşlemi sil'}</button>`}
+    ${!d.isRule && !d.isNew && d.loanId ? `<p class="note" style="text-align:center">Bu işlem "${esc(S.loans.find(x => x.id === d.loanId)?.name || 'kredi')}" kredisine bağlı${d.inst != null ? ` (${d.inst + 1}. taksit). Silersen taksit ödenmemiş görünür` : ''}.</p>` : ''}
     ${!d.isRule && !d.isNew && d.recurringId ? '<p class="note" style="text-align:center">Bu işlem bir tekrarlayan işlemden oluşturuldu. Burada değiştirmek yalnızca bu kaydı etkiler.</p>' : ''}
   `);
   sizeAmt();
@@ -915,6 +1024,63 @@ function drawPeriodSheet() {
     <p class="note">Seçtiğin gün <b>bir sonraki dönemin ilk günüdür</b>. Dönem, bittiği ayın adını alır. ${esc(ex)}</p>
     <p class="note">Özet'teki gelir/gider, kategori dağılımı, son 6 ay grafiği ve İşlemler listesi bu döneme göre gruplanır. Kredi kartı ekstreleri kendi kesim günlerine göre hesaplanmaya devam eder. Kısa aylarda 29–31 gibi günler ayın son gününe kayar.</p>`);
 }
+/* ---------- loan sheets ---------- */
+function loanSheet(l) {
+  const t = todayStr(), [y, m, d] = t.split('-').map(Number);
+  sheetState = l ? {...l, isLoan:true, isNew:false, amountStr:String(l.amount).replace('.', ','), installmentStr:String(l.installment).replace('.', ','), count:String(l.count), paidBefore:String(l.paidBefore || 0)}
+    : {isLoan:true, isNew:true, id:uid(), name:'', amountStr:'', accountId:defaultAcc(), date:t, count:'12', installmentStr:'', firstDue:mkDate(y, m + 1, d), payFrom:defaultAcc(), auto:false, paidBefore:'0', addIncome:true, icon:null};
+  drawLoanSheet();
+}
+function loanSummary(d) {
+  const amt = parseAmount(d.amountStr), inst = parseAmount(d.installmentStr), n = parseInt(d.count, 10);
+  if (!(n > 0) || !(inst > 0) || !d.firstDue) return 'Taksit sayısı, taksit tutarı ve ilk taksit tarihini girince özet burada görünür.';
+  const total = r2(n * inst), [y, m, dd] = d.firstDue.split('-').map(Number), last = mkDate(y, m + n - 1, dd);
+  return `Toplam geri ödeme <b>${money(total)}</b>${amt > 0 ? ` · maliyet <b>${money(r2(total - amt))}</b>` : ''}<br>Son taksit <b>${parseD(last).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}</b>`;
+}
+function drawLoanSheet() {
+  if (sheetState.picking) return drawIconPicker();
+  const d = sheetState;
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isNew ? 'Yeni kredi' : 'Krediyi düzenle'}</h2><button data-action="save-loan" style="font-weight:700">Kaydet</button></div>
+    <button class="tx-icon" data-action="icon-open" style="margin-bottom:14px"><span class="ic-big" style="background:${LINKS.loan.color}22;color:${LINKS.loan.color}">${ico(d.icon || '🏦')}</span><small>${d.icon ? 'Logoyu değiştir' : 'Logo ekle'}</small></button>
+    <div class="form">
+      <div class="field"><label>Ad</label><input data-f="name" value="${esc(d.name)}" placeholder="Örn. İhtiyaç kredisi"></div>
+      <div class="field"><label>Çekilen tutar</label><input data-f="amountStr" inputmode="decimal" value="${esc(d.amountStr)}" placeholder="0"></div>
+      <div class="field"><label>Yattığı hesap</label><select data-f="accountId">${accOptions(d.accountId)}</select></div>
+      <div class="field"><label>Çekiliş tarihi</label><input type="date" data-f="date" value="${d.date}"></div>
+    </div>
+    <div class="form">
+      <div class="field"><label>Taksit sayısı</label><input data-f="count" inputmode="numeric" value="${esc(d.count)}"></div>
+      <div class="field"><label>Taksit tutarı</label><input data-f="installmentStr" inputmode="decimal" value="${esc(d.installmentStr)}" placeholder="0"></div>
+      <div class="field"><label>İlk taksit</label><input type="date" data-f="firstDue" value="${d.firstDue}"></div>
+      <div class="field"><label>Ödeme hesabı</label><select data-f="payFrom">${accOptions(d.payFrom)}</select></div>
+      <div class="field"><label>Önceden ödenen</label><input data-f="paidBefore" inputmode="numeric" value="${esc(d.paidBefore)}" placeholder="0"></div>
+      <div class="field"><label>Otomatik öde</label><span style="flex:1;text-align:right;color:var(--muted);font-size:13px">Vadesi gelen taksit hesaptan düşer</span><input type="checkbox" data-f="auto" ${d.auto ? 'checked' : ''}></div>
+      ${d.isNew ? `<div class="field"><label>Kredi geliri</label><span style="flex:1;text-align:right;color:var(--muted);font-size:13px">Çekilen tutarı gelir olarak ekle</span><input type="checkbox" data-f="addIncome" ${d.addIncome ? 'checked' : ''}></div>` : ''}
+    </div>
+    <div class="card" style="margin-top:0" id="loan-sum">${loanSummary(d)}</div>
+    <p class="note">"Önceden ödenen": uygulamayı kullanmaya başlamadan önce ödediğin taksit sayısı. Bu taksitler için gider eklenmez, borçtan düşülür. "Kredi geliri"ni, çekilen tutarı daha önce gelir olarak girdiysen kapat.</p>
+    ${d.isNew ? '' : '<button class="secondary danger" data-action="del-loan">Krediyi sil</button>'}`);
+}
+function drawLoanDetail() {
+  const l = S.loans.find(x => x.id === sheetState.id); if (!l) return closeSheet();
+  const st = loanState(l), t = todayStr(), total = r2(l.count * l.installment);
+  const row = r => {
+    const late = !r.paid && r.date < t;
+    const right = r.pre ? '<span class="badge">Önceden ödendi</span>' : r.tx ? `<span class="paid">Ödendi ✓</span>` : `<button class="pay-btn" data-action="loan-pay" data-i="${r.i}">Öde</button>`;
+    return `<div class="row inst ${r.paid ? 'done' : ''}" ${r.tx ? `data-action="edit-tx" data-id="${r.tx.id}" role="button"` : ''}>
+      <div class="ic" style="background:${late ? 'var(--neg)' : 'var(--chip)'};color:${late ? '#fff' : 'var(--muted)'};font-size:13px;font-weight:700">${r.i + 1}</div>
+      <div class="t"><b class="num">${money(r.amount)}</b><small class="${late ? 'neg' : ''}">${parseD(r.date).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}${late ? ' · gecikti' : r.tx && r.tx.date !== r.date ? ` · ${shortDate(r.tx.date)} ödendi` : ''}</small></div>${right}</div>`;
+  };
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Kapat</button><h2>${esc(l.name)}</h2><button data-action="edit-loan">Düzenle</button></div>
+    <section class="hero" style="padding:18px 20px"><div class="label">Kalan borç</div><div class="big-amt num" style="margin-bottom:12px">${money(st.remaining)}</div>
+      <div class="hero-row"><div><span>Ödenen taksit</span><b class="num">${st.paidCount} / ${l.count}</b></div><div><span>Sonraki taksit</span><b class="num">${st.next ? money(st.next.amount, false) : '—'}</b><span>${st.next ? relDay(st.next.date) : 'Kredi bitti'}</span></div></div>
+      <div class="label" style="margin-top:12px">Çekilen ${money(l.amount, false)} · toplam geri ödeme ${money(total, false)} · maliyet ${money(r2(total - l.amount), false)}${l.auto ? ' · otomatik ödeme açık' : ''}</div></section>
+    <div class="sub-label" style="margin-top:16px">Taksitler</div>
+    <div class="list">${st.rows.map(row).join('')}</div>
+    <p class="note">"Öde" dediğinde taksit bugünün tarihiyle ${esc(accName(l.payFrom || l.accountId))} hesabından "Kredi" gideri olarak eklenir. Ödenmiş bir taksite dokunup tarihini veya tutarını düzeltebilir, silerek ödenmemiş hale getirebilirsin.</p>`);
+}
 function catsSheet() {
   sheetState = {mode:'list', kind:'expense'};
   drawCatsSheet();
@@ -926,7 +1092,7 @@ function drawCatsSheet() {
   const d = sheetState;
   if (d.mode === 'list') {
     const parents = S.categories.filter(c => c.kind === d.kind && !c.parentId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const row = (c, nested) => `<button class="row ${nested ? 'nested' : ''}" data-action="edit-cat" data-id="${c.id}" style="${c.hidden ? 'opacity:.45' : ''}"><div class="ic" style="background:${(c.color || '#64748B')}22">${ico(c.emoji)}</div><div class="t"><b>${esc(c.name)}</b>${c.hidden ? '<small>Gizli</small>' : ''}</div>${ICON.rowChev}</button>`;
+    const row = (c, nested) => `<button class="row ${nested ? 'nested' : ''}" data-action="edit-cat" data-id="${c.id}" style="${c.hidden ? 'opacity:.45' : ''}"><div class="ic" style="background:${(c.color || '#64748B')}22">${ico(c.emoji)}</div><div class="t"><b>${esc(c.name)}${c.link ? `<span class="badge">🔗 ${LINKS[c.link].name}</span>` : ''}</b>${c.hidden ? '<small>Gizli</small>' : ''}</div>${ICON.rowChev}</button>`;
     openSheet(`
       <div class="sheet-head"><button data-action="close-sheet">Kapat</button><h2>Kategoriler</h2><button data-action="new-cat">Ekle</button></div>
       <div class="seg">${[['expense', 'Gider'], ['income', 'Gelir']].map(([k, l]) => `<button class="${d.kind === k ? 'on' : ''}" data-action="cat-kind" data-v="${k}">${l}</button>`).join('')}</div>
@@ -938,11 +1104,13 @@ function drawCatsSheet() {
       <div class="sheet-head"><button data-action="cat-back">Geri</button><h2>${c.isNew ? 'Yeni kategori' : 'Kategori'}</h2><button data-action="save-cat" style="font-weight:700">Kaydet</button></div>
       <div class="form">
         <div class="field"><label>Ad</label><input data-cf="name" value="${esc(c.name)}"></div>
+        <div class="field"><label>Bağlı grup</label><select data-cf="link"><option value="">Yok</option>${Object.entries(LINKS).map(([k, L]) => `<option value="${k}" ${c.link === k ? 'selected' : ''}>${L.name}</option>`).join('')}</select></div>
         <button class="field" data-action="icon-open" style="width:100%;text-align:left"><label>Varsayılan simge</label><span style="flex:1;text-align:right;color:var(--muted);font-size:13px">${c.emoji ? '' : 'Seçmezsen addan tahmin edilir'}</span><span class="ic" style="background:${(c.color || '#64748B')}22">${ico(c.emoji || autoCatIcon(c))}</span>${ICON.rowChev}</button>
         ${hasChildren ? '' : `<div class="field"><label>Üst kategori</label><select data-cf="parentId"><option value="">Yok (ana kategori)</option>${parents.map(p => `<option value="${p.id}" ${c.parentId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`}
         <div class="field"><label>Gizle</label><span style="flex:1"></span><input type="checkbox" data-cf="hidden" ${c.hidden ? 'checked' : ''}></div>
       </div>
-      <p class="note">Gizlenen kategoriler eski işlemlerde görünmeye devam eder, yeni işlem eklerken listede çıkmaz.</p>`);
+      <p class="note">Gizlenen kategoriler eski işlemlerde görünmeye devam eder, yeni işlem eklerken listede çıkmaz.</p>
+      <p class="note"><b>Bağlı grup</b>: Kredi, Yatırım ve Borç gruplarında gelir ve gider kategorileri birbirine bağlıdır. Örneğin altın alışı (gider) ve satışı (gelir) birbirini götürür; Özet'te grubun net kâr/zararı ayrıca gösterilir; hareketler aylık gelir/gider toplamlarında da yer alır. Alt kategoriler üst kategorinin grubunu devralır.</p>`);
   }
 }
 
@@ -990,11 +1158,49 @@ const A = {
     Object.assign(sheetState, {type:'transfer', accountId:from || sheetState.accountId, toAccountId:a.id, amount:String(amt).replace('.', ','), note:`${a.name} ekstre ödemesi`, categoryId:null, catParent:null});
     drawTxSheet();
   },
-  tab(el, e) { e?.preventDefault(); if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
+  tab(el, e) { e?.preventDefault(); if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; ui.linkFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
   month(el) { ui.month = shiftMonth(ui.month, +el.dataset.d); render(); },
   'goto-month'(el) { ui.month = el.dataset.m; render(); },
-  'cat-drill'(el) { ui.catFilter = el.dataset.id; ui.accFilter = null; ui.tab = 'txs'; render(); window.scrollTo(0, 0); },
-  'open-acc'(el) { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
+  'cat-drill'(el) { ui.catFilter = el.dataset.id; ui.accFilter = null; ui.linkFilter = null; ui.tab = 'txs'; render(); window.scrollTo(0, 0); },
+  'add-loan'() { if (!S.accounts.length) return toast('Önce bir hesap ekle'); loanSheet(); },
+  'open-loan'(el) { sheetState = {isLoanDetail:true, id:el.dataset.id}; drawLoanDetail(); },
+  'edit-loan'() { loanSheet(S.loans.find(x => x.id === sheetState.id)); },
+  'loan-pay'(el) {
+    const l = S.loans.find(x => x.id === sheetState.id), r = loanState(l).rows.find(x => x.i === +el.dataset.i);
+    if (!r || r.paid) return;
+    payInstallment(l, r, todayStr()); save(); derive(); drawLoanDetail(); render(); toast(`${r.i + 1}. taksit ödendi`);
+  },
+  'save-loan'() {
+    const d = sheetState, amount = parseAmount(d.amountStr), installment = parseAmount(d.installmentStr), count = parseInt(d.count, 10), paidBefore = parseInt(d.paidBefore, 10) || 0;
+    if (!d.name.trim()) return toast('Krediye bir ad ver');
+    if (!(amount > 0)) return toast('Çekilen tutarı gir');
+    if (!(count > 0 && count <= 600)) return toast('Taksit sayısını gir');
+    if (!(installment > 0)) return toast('Taksit tutarını gir');
+    if (!d.firstDue) return toast('İlk taksit tarihini seç');
+    if (paidBefore < 0 || paidBefore > count) return toast('Önceden ödenen taksit sayısı hatalı');
+    ensureLinks();
+    S.loans = S.loans || [];
+    const l = {id:d.id, name:d.name.trim(), amount, accountId:d.accountId, date:d.date || todayStr(), count, installment, firstDue:d.firstDue,
+      payFrom:d.payFrom || d.accountId, auto:!!d.auto, paidBefore, icon:d.icon || null};
+    const old = S.loans.find(x => x.id === l.id);
+    if (old) Object.assign(old, l); else S.loans.push(l);
+    const inc = S.txs.find(t => t.loanId === l.id && t.type === 'income');
+    if (inc) Object.assign(inc, {amount, accountId:l.accountId, date:l.date, note:`${l.name} · kredi`});
+    else if (d.isNew && d.addIncome) S.txs.push({id:uid(), type:'income', amount, accountId:l.accountId, toAccountId:null, categoryId:linkCat('loan', 'income'), date:l.date, note:`${l.name} · kredi`, memo:'', ts:Date.now(), loanId:l.id});
+    S.txs = S.txs.filter(t => !(t.loanId === l.id && t.inst != null && t.inst >= count)); // installments beyond a shortened schedule
+    const n = runLoans(); save(); derive();
+    sheetState = {isLoanDetail:true, id:l.id}; drawLoanDetail(); render();
+    toast(n ? `Kaydedildi · ${n} taksit otomatik ödendi` : 'Kaydedildi');
+  },
+  'del-loan'() {
+    const n = S.txs.filter(t => t.loanId === sheetState.id).length;
+    if (!confirm(`Bu kredi ve ona bağlı ${n} işlem (kredi geliri ve ödenen taksitler) kalıcı olarak silinsin mi?`)) return;
+    S.txs = S.txs.filter(t => t.loanId !== sheetState.id); S.loans = S.loans.filter(x => x.id !== sheetState.id);
+    save(); closeSheet(); render(); toast('Kredi silindi');
+  },
+  'open-link'(el) { ui.linkFilter = el.dataset.k; ui.accFilter = null; ui.catFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
+  'clear-link'() { ui.linkFilter = null; render(); },
+  'open-acc'(el) { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.linkFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
   'clear-acc'() { ui.accFilter = null; render(); },
   'clear-cat'() { ui.catFilter = null; render(); },
   'close-sheet': closeSheet,
@@ -1014,6 +1220,7 @@ const A = {
     const t = {id:d.id, type:d.type, amount, accountId:d.accountId, toAccountId:d.type === 'transfer' ? d.toAccountId : null,
       categoryId:d.type === 'transfer' || d.type === 'adjust' ? null : d.categoryId, date:d.date || todayStr(), note:(d.note || '').trim(), memo:d.memo || '', ts:d.ts || Date.now()};
     if (d.recurringId) t.recurringId = d.recurringId;
+    if (d.loanId) { t.loanId = d.loanId; if (d.inst != null) t.inst = d.inst; }
     if (d.icon && d.type !== 'adjust') t.icon = d.icon;
     const i = S.txs.findIndex(x => x.id === t.id);
     if (i >= 0) S.txs[i] = t; else S.txs.push(t);
@@ -1049,6 +1256,7 @@ const A = {
     if (!confirm(n ? `"${d.name}" ve ona ait ${n} işlem kalıcı olarak silinecek. Emin misin?` : `"${d.name}" silinsin mi?`)) return;
     S.txs = S.txs.filter(t => t.accountId !== d.id && t.toAccountId !== d.id);
     S.rules = (S.rules || []).filter(r => r.accountId !== d.id && r.toAccountId !== d.id);
+    S.loans = (S.loans || []).filter(l => l.accountId !== d.id && l.payFrom !== d.id);
     S.accounts = S.accounts.filter(a => a.id !== d.id).map(a => a.parentId === d.id ? {...a, parentId:null} : a);
     if (ui.accFilter === d.id) { ui.accFilter = null; }
     save(); closeSheet(); render(); toast('Hesap silindi');
@@ -1067,7 +1275,7 @@ const A = {
   'cat-back'() { sheetState = {mode:'list', kind:sheetState.kind}; drawCatsSheet(); },
   'save-cat'() {
     const c = sheetState.cat; if (!c.name.trim()) return toast('Ad gir');
-    const {isNew, ...clean} = c; clean.name = c.name.trim(); clean.parentId = c.parentId || null;
+    const {isNew, ...clean} = c; clean.name = c.name.trim(); clean.parentId = c.parentId || null; clean.link = c.link || null;
     if (!clean.emoji) clean.emoji = autoCatIcon(clean);
     if (!clean.color) clean.color = hashColor(clean.id);
     const i = S.categories.findIndex(x => x.id === c.id); if (i >= 0) S.categories[i] = clean; else S.categories.push(clean);
@@ -1085,10 +1293,11 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.id === 'crop-zoom' && sheetState?.crop) { cropZoomTo(sheetState.crop, +el.value); cropPaint(); return; }
-  if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q ? '' : monthSwitch(); renderTxList(); return; }
+  if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q || ui.linkFilter ? '' : monthSwitch(); renderTxList(); return; }
   if (!sheetState) return;
   if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
   if (el.id === 'f-amt') sizeAmt();
+  if (sheetState.isLoan && $('#loan-sum')) $('#loan-sum').innerHTML = loanSummary(sheetState);
   if (el.dataset.cf) { sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; }
 });
 document.addEventListener('change', e => {
@@ -1215,13 +1424,19 @@ $('#file-mm').addEventListener('change', async e => {
     const rules = (S.rules || []).filter(r => ids.has(r.accountId) && (!r.toAccountId || ids.has(r.toAccountId)));
     const keep = new Set(rules.map(r => r.id));
     data.txs.push(...S.txs.filter(t => keep.has(t.recurringId)));
+    const loans = (S.loans || []).filter(l => ids.has(l.accountId) && ids.has(l.payFrom || l.accountId)), keepL = new Set(loans.map(l => l.id));
+    data.txs.push(...S.txs.filter(t => keepL.has(t.loanId) && !keep.has(t.recurringId)));
+    data.categories.push(...S.categories.filter(c => !String(c.id).startsWith('mm-'))); // categories made in Cüzdan
     // keep icons the user chose: category defaults and per-transaction overrides (ids are stable across imports)
     const oldCat = new Map(S.categories.map(c => [c.id, c.emoji])), oldTx = new Map(S.txs.filter(t => t.icon).map(t => [t.id, t.icon]));
     const oldAcc = new Map(S.accounts.filter(a => a.icon).map(a => [a.id, a.icon]));
     for (const a of data.accounts) if (oldAcc.get(a.id)) a.icon = oldAcc.get(a.id);
     for (const c of data.categories) if (oldCat.get(c.id)) c.emoji = oldCat.get(c.id);
+    const oldLink = new Map(S.categories.filter(c => 'link' in c).map(c => [c.id, c.link]));
+    for (const c of data.categories) if (oldLink.has(c.id)) c.link = oldLink.get(c.id);
     for (const t of data.txs) if (oldTx.get(t.id)) t.icon = oldTx.get(t.id);
-    S = {...emptyState(), ...data, rules, icons:S.icons || {}, meta:{...S.meta, ...data.meta}};
+    S = {...emptyState(), ...data, rules, loans, icons:S.icons || {}, meta:{...S.meta, ...data.meta}};
+    ensureLinks(); S.meta.linksV1 = true;
     await DB.set('state', S);
     ui.tab = 'home'; ui.month = curMonth(); render();
     toast(`${data.accounts.length} hesap, ${data.categories.length} kategori, ${data.txs.length.toLocaleString('tr-TR')} işlem aktarıldı`);
@@ -1237,14 +1452,16 @@ $('#file-mm').addEventListener('change', async e => {
     for (const a of S.accounts) if (a.type === 'card' && a.statementDay && String(a.id).startsWith('mm-')) a.statementDay = mmCutDay(a.statementDay);
     S.meta.cutDayFix = true; if (S.accounts.length) save();
   }
+  if (!S.meta.linksV1 && S.categories.length) { ensureLinks(); S.meta.linksV1 = true; save(); }
   ui.month = curMonth();
-  const n = runRecurring();
+  const n = runRecurring(), nl = runLoans();
   render();
   if (n) toast(`${n} tekrarlayan işlem eklendi`);
+  if (nl) toast(`${nl} kredi taksiti otomatik ödendi`);
   // a PWA can stay open for days: re-check due items whenever it comes back to the foreground
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || sheetState) return;
-    const k = runRecurring();
+    const k = runRecurring() + runLoans();
     if (k || D?.today !== todayStr()) render();
     if (k) toast(`${k} tekrarlayan işlem eklendi`);
   });
