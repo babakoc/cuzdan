@@ -263,13 +263,13 @@ function derive() {
   for (const t of S.txs) { const k = t.date.slice(0, 7); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
   for (const l of byMonth.values()) l.sort(txSort);
   let assets = 0, debts = 0;
-  for (const a of S.accounts) { if (a.hidden) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
+  for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
   D = {acc, cat, bal, future, byMonth, assets, debts, today};
 }
 const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
 const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
 const catPath = id => { const c = D.cat.get(id); if (!c) return 'Kategorisiz'; const p = c.parentId && D.cat.get(c.parentId); return p ? `${p.name} › ${c.name}` : c.name; };
-const accName = id => D.acc.get(id)?.name ?? 'Silinmiş hesap';
+const accName = id => { const a = D.acc.get(id); return !a ? 'Silinmiş hesap' : a.deleted ? `${a.name} (silinmiş)` : a.name; };
 function monthStats(m) {
   let inc = 0, exp = 0; const cats = new Map();
   for (const t of D.byMonth.get(m) || []) {
@@ -381,7 +381,8 @@ function welcome() {
 }
 
 VIEWS.accounts = () => {
-  const visible = S.accounts.filter(a => !a.hidden), hidden = S.accounts.filter(a => a.hidden);
+  const live = S.accounts.filter(a => !a.deleted);
+  const visible = live.filter(a => !a.hidden), hidden = live.filter(a => a.hidden);
   const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
   const accRow = (a, nested) => {
     const v = D.bal.get(a.id) || 0, f = D.future.get(a.id) || 0;
@@ -456,7 +457,7 @@ VIEWS.settings = () => {
   return `<header class="big"><h1>Ayarlar</h1></header>
   <div class="tiles">
     <div class="tile"><span>İşlem</span><b class="num">${S.txs.length.toLocaleString('tr-TR')}</b></div>
-    <div class="tile"><span>Hesap</span><b class="num">${S.accounts.length}</b></div>
+    <div class="tile"><span>Hesap</span><b class="num">${S.accounts.filter(a => !a.deleted).length}</b></div>
     <div class="tile"><span>Kategori</span><b class="num">${S.categories.length}</b></div>
   </div>
   <div class="sec-title">Düzenle</div>
@@ -480,7 +481,7 @@ let sheetState = null;
 function openSheet(html) { $('#sheet').innerHTML = '<div class="grab"></div>' + html; document.body.classList.add('sheet-open'); $('#sheet').scrollTop = 0; }
 function closeSheet() { document.body.classList.remove('sheet-open'); sheetState = null; }
 
-const accOptions = (sel, filter = () => true) => S.accounts.filter(a => (!a.hidden || a.id === sel) && filter(a))
+const accOptions = (sel, filter = () => true) => S.accounts.filter(a => ((!a.hidden && !a.deleted) || a.id === sel) && filter(a))
   .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
 
 function txSheet(t) {
@@ -716,7 +717,8 @@ async function importMM(file) {
   const accounts = rows('select ZUID, ZNICNAME, ZGROUPUID, ZISDEL, ZCARDASSETUID, ZORDER from ZASSET').map(a => {
     const id = 'mm-' + a.ZUID, type = groupType(String(a.ZGROUPUID), groups.get(String(a.ZGROUPUID)));
     return {id, name:String(a.ZNICNAME || 'Hesap').trim(), type, parentId:a.ZCARDASSETUID ? 'mm-' + a.ZCARDASSETUID : null,
-      opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), hidden:(+a.ZISDEL || 0) !== 0, order:a.ZORDER ?? 0}; // MM: 0 = active, 1 = hidden, 3 = closed; all keep their history
+      opening:0, limit:null, color:hashColor(a.ZUID + a.ZNICNAME), // MM: 0 = active, 1 = deleted by the user (MM hides it but its transactions still count), other = hidden
+      deleted:+a.ZISDEL === 1, hidden:(+a.ZISDEL || 0) > 1, order:a.ZORDER ?? 0};
 
   });
   const accIds = new Set(accounts.map(a => a.id));
