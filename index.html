@@ -133,6 +133,7 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .row .t{flex:1;min-width:0}
 .row .t b{display:block;font-weight:560;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .t small{display:block;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t small.tx-note{color:var(--text);opacity:.72}
 .row .a{text-align:right;font-weight:620;white-space:nowrap}
 .row .a small{display:block;font-size:12px;color:var(--muted);font-weight:500}
 .badge{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;background:var(--chip);color:var(--muted);margin-left:6px;vertical-align:1px}
@@ -598,7 +599,7 @@ function txRow(t, ctxAcc) {
   let icon, color, title, sub, amt, cls = '';
   if (t.type === 'transfer') {
     icon = t.icon || '⇄'; color = '#64748B';
-    title = t.note || 'Transfer';
+    title = 'Transfer';
     sub = `${accName(t.accountId)} → ${accName(t.toAccountId)}`;
     if (ctxAcc === t.accountId) { amt = '−' + money(t.amount); } else if (ctxAcc === t.toAccountId) { amt = '+' + money(t.amount); cls = 'pos'; } else amt = money(t.amount);
   } else if (t.type === 'adjust') {
@@ -607,15 +608,16 @@ function txRow(t, ctxAcc) {
   } else {
     const c = D.cat.get(t.categoryId), tc = topCat(t.categoryId);
     icon = t.icon || c?.emoji || tc?.emoji || '•'; color = tc?.color || '#64748B';
-    title = t.note || c?.name || 'Kategorisiz';
-    sub = `${t.note ? catPath(t.categoryId) + ' · ' : (c?.parentId ? (D.cat.get(c.parentId)?.name + ' · ') : '')}${accName(t.accountId)}`;
+    // the category is the headline; the parent category and account go below
+    title = c?.name || 'Kategorisiz';
+    sub = `${c?.parentId && D.cat.get(c.parentId) ? D.cat.get(c.parentId).name + ' · ' : ''}${accName(t.accountId)}`;
     const v = t.type === 'income' ? t.amount : -t.amount; // refunds are negative expenses
     amt = (v >= 0 ? '+' : '−') + money(Math.abs(v)); cls = v >= 0 ? 'pos' : '';
   }
   const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
-    <div class="t"><b>${esc(title)}${planned}</b><small>${esc(sub)}</small></div>
+    <div class="t"><b>${esc(title)}${planned}</b>${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${esc(sub)}</small></div>
     <div class="a num ${cls}">${amt}</div></button>`;
 }
 
