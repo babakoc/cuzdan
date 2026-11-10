@@ -52,6 +52,7 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .month button{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--accent)}
 .month button:disabled{opacity:.3}
 .month span{min-width:150px;text-align:center;font-weight:650;font-size:17px}
+.month span small{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:1px}
 
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .tile{background:var(--card);border-radius:18px;padding:12px;box-shadow:var(--shadow);min-width:0}
@@ -229,7 +230,19 @@ const fmtTRY = new Intl.NumberFormat('tr-TR', {style:'currency', currency:'TRY',
 const fmtTRY0 = new Intl.NumberFormat('tr-TR', {style:'currency', currency:'TRY', maximumFractionDigits:0});
 const money = (v, dec = true) => (dec ? fmtTRY : fmtTRY0).format(Math.abs(v) < 0.005 ? 0 : v);
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
-const curMonth = () => todayStr().slice(0, 7);
+// Budget periods. With start day 1 a period is the calendar month. With e.g. 16 it runs 16 Oct – 15 Nov and is
+// named after the month it ends in ("Kasım"), so anything spent from the 16th on counts toward the next month.
+const periodDay = () => Math.min(31, Math.max(1, parseInt(S?.meta?.periodStart, 10) || 1));
+function periodKey(date, d = periodDay()) {
+  const k = date.slice(0, 7); if (d === 1) return k;
+  const [y, m] = k.split('-').map(Number);
+  return date >= mkDate(y, m, d) ? shiftMonth(k, 1) : k;
+}
+function periodRange(key, d = periodDay()) {
+  const [y, m] = key.split('-').map(Number);
+  return d === 1 ? [key + '-01', mkDate(y, m, 31)] : [mkDate(y, m - 1, d), addDays(mkDate(y, m, d), -1)];
+}
+const curMonth = () => periodKey(todayStr());
 const shiftMonth = (m, n) => { let [y, mo] = m.split('-').map(Number); mo += n; while (mo < 1) { mo += 12; y--; } while (mo > 12) { mo -= 12; y++; } return `${y}-${pad(mo)}`; };
 const parseD = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const monthLabel = m => parseD(m + '-01').toLocaleDateString('tr-TR', {month:'long', year:'numeric'});
@@ -392,7 +405,7 @@ function derive() {
     else if (t.type === 'transfer') { add(m, t.accountId, -t.amount); add(m, t.toAccountId, t.amount); }
   }
   const byMonth = new Map();
-  for (const t of S.txs) { const k = t.date.slice(0, 7); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
+  for (const t of S.txs) { const k = periodKey(t.date); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
   for (const l of byMonth.values()) l.sort(txSort);
   let assets = 0, debts = 0;
   for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
@@ -522,7 +535,7 @@ const ICON = {
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   rowChev:'<svg class="chev" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m1 1 6 6-6 6"/></svg>'
 };
-const monthSwitch = () => `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki ay">${ICON.chevL}</button><span>${monthLabel(ui.month)}</span><button data-action="month" data-d="1" aria-label="Sonraki ay">${ICON.chevR}</button></div>`;
+const monthSwitch = () => { const [a, b] = periodRange(ui.month); return `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki dönem">${ICON.chevL}</button><span>${monthLabel(ui.month)}${periodDay() > 1 ? `<small>${shortDate(a)} – ${shortDate(b)}</small>` : ''}</span><button data-action="month" data-d="1" aria-label="Sonraki dönem">${ICON.chevR}</button></div>`; };
 
 function txRow(t, ctxAcc) {
   let icon, color, title, sub, amt, cls = '';
@@ -742,6 +755,7 @@ VIEWS.settings = () => {
   <div class="sec-title">Düzenle</div>
   <div class="list">
     <button class="row" data-action="tab" data-tab="recurring"><div class="ic" style="background:#12A26B22">🔁</div><div class="t"><b>Tekrarlayan işlemler</b><small>${(S.rules || []).filter(ruleActive).length} aktif${pendingRules().length ? ` · ${pendingRules().length} onay bekliyor` : ''}</small></div>${ICON.rowChev}</button>
+    <button class="row" data-action="period"><div class="ic" style="background:#0EA5E922">📅</div><div class="t"><b>Dönem başlangıç günü</b><small>${periodDay() === 1 ? 'Takvim ayı (her ayın 1. günü)' : `Her ayın ${periodDay()}. günü yeni dönem başlar`}</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="manage-cats"><div class="ic" style="background:#8E4EC622">🏷️</div><div class="t"><b>Kategoriler</b><small>Ekle, yeniden adlandır, gizle</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="add-acc"><div class="ic" style="background:#4C5BFF22">🏦</div><div class="t"><b>Yeni hesap</b><small>Banka, kart, nakit, kredi…</small></div>${ICON.rowChev}</button>
   </div>
@@ -891,6 +905,16 @@ function drawAccSheet() {
   `);
 }
 
+function drawPeriodSheet() {
+  const d = sheetState, v = +d.v, key = periodKey(todayStr(), v), [a, b] = periodRange(key, v);
+  const ex = v === 1 ? '' : `${shortDate(mkDate(2026, 11, v))} tarihli bir harcama ${monthLabel(periodKey(mkDate(2026, 11, v), v))} dönemine, ${shortDate(addDays(mkDate(2026, 11, v), -1))} tarihli bir harcama ${monthLabel(periodKey(addDays(mkDate(2026, 11, v), -1), v))} dönemine sayılır.`;
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>Dönem</h2><button data-action="save-period" style="font-weight:700">Kaydet</button></div>
+    <div class="form"><div class="field"><label>Yeni dönem</label><select data-f="v">${Array.from({length:31}, (_, i) => i + 1).map(n => `<option value="${n}" ${n === v ? 'selected' : ''}>${n === 1 ? 'Her ayın 1. günü (takvim ayı)' : `Her ayın ${n}. günü`}</option>`).join('')}</select></div></div>
+    <div class="card" style="margin-top:0"><div class="eyebrow">Şu anki dönem</div><div style="font-size:20px;font-weight:700;margin:4px 0 2px">${monthLabel(key)}</div><div class="num" style="color:var(--muted)">${shortDate(a)} – ${shortDate(b)}</div></div>
+    <p class="note">Seçtiğin gün <b>bir sonraki dönemin ilk günüdür</b>. Dönem, bittiği ayın adını alır. ${esc(ex)}</p>
+    <p class="note">Özet'teki gelir/gider, kategori dağılımı, son 6 ay grafiği ve İşlemler listesi bu döneme göre gruplanır. Kredi kartı ekstreleri kendi kesim günlerine göre hesaplanmaya devam eder. Kısa aylarda 29–31 gibi günler ayın son gününe kayar.</p>`);
+}
 function catsSheet() {
   sheetState = {mode:'list', kind:'expense'};
   drawCatsSheet();
@@ -1030,6 +1054,8 @@ const A = {
     save(); closeSheet(); render(); toast('Hesap silindi');
   },
   'manage-cats'() { catsSheet(); },
+  period() { sheetState = {isPeriod:true, v:periodDay()}; drawPeriodSheet(); },
+  'save-period'() { S.meta.periodStart = +sheetState.v; save(); closeSheet(); ui.month = curMonth(); render(); toast(+S.meta.periodStart === 1 ? 'Dönem: takvim ayı' : `Yeni dönem her ayın ${S.meta.periodStart}. günü başlıyor`); },
   'cat-kind'(el) { sheetState.kind = el.dataset.v; drawCatsSheet(); },
   'edit-cat'(el) { const c = S.categories.find(x => x.id === el.dataset.id); sheetState = {mode:'edit', kind:c.kind, cat:{...c}}; drawCatsSheet(); },
   'new-cat'(el) {
@@ -1070,6 +1096,7 @@ document.addEventListener('change', e => {
   if (el.dataset.f) {
     sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
     if (el.dataset.redraw) drawAccSheet();
+    if (sheetState.isPeriod) drawPeriodSheet();
     if (el.dataset.f === 'accountId' && sheetState.type === 'transfer') drawTxSheet();
   }
   if (el.dataset.cf) sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value;
@@ -1210,6 +1237,7 @@ $('#file-mm').addEventListener('change', async e => {
     for (const a of S.accounts) if (a.type === 'card' && a.statementDay && String(a.id).startsWith('mm-')) a.statementDay = mmCutDay(a.statementDay);
     S.meta.cutDayFix = true; if (S.accounts.length) save();
   }
+  ui.month = curMonth();
   const n = runRecurring();
   render();
   if (n) toast(`${n} tekrarlayan işlem eklendi`);
