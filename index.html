@@ -121,6 +121,12 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .bars .col i.e{background:var(--neg);opacity:.85} .bars .col i.g{background:var(--pos);opacity:.85}
 .bars .b.cur span{color:var(--text);font-weight:700}
 .bars span{font-size:11px;color:var(--muted);font-weight:600}
+.bars.b12{gap:4px}
+.bars.b12 .col{max-width:22px;gap:2px}
+.bars.b12 span{font-size:10px}
+.cat-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:-2px 0 12px}
+.cat-meta span{font-size:11px;color:var(--muted);font-weight:600}
+.cat-meta b{display:block;font-size:15px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bar-legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
 .bar-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
 
@@ -568,12 +574,12 @@ function runLoans() { // auto-pay: installments that came due are paid from the 
 }
 
 function monthStats(m) {
-  let inc = 0, exp = 0; const cats = new Map();
+  let inc = 0, exp = 0; const cats = new Map(), incCats = new Map();
   for (const t of D.byMonth.get(m) || []) {
-    if (t.type === 'income') inc += t.amount;
+    if (t.type === 'income') { inc += t.amount; const k = topCat(t.categoryId)?.id || '_'; incCats.set(k, (incCats.get(k) || 0) + t.amount); }
     else if (t.type === 'expense') { exp += t.amount; const c = topCat(t.categoryId); const k = c?.id || '_'; cats.set(k, (cats.get(k) || 0) + t.amount); }
   }
-  return {inc, exp, cats};
+  return {inc, exp, cats, incCats};
 }
 
 /* ---------- ui state ---------- */
@@ -623,17 +629,28 @@ function txRow(t, ctxAcc) {
 
 /* ---------- views ---------- */
 const VIEWS = {};
+// donut + legend for a {key -> amount} map; keys are category ids unless nameOf says otherwise
+function donutCard(title, map, empty, nameOf) {
+  const sorted = [...map.entries()].filter(e => e[1] > 0.004).sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((s, e) => s + e[1], 0);
+  if (!total) return `<section class="card"><h3>${title}</h3><div class="empty" style="padding:16px">${empty}</div></section>`;
+  const top = sorted.slice(0, 6), rest = sorted.slice(6).reduce((s, x) => s + x[1], 0);
+  const segs = top.map(([id, v], i) => { const c = D.cat.get(id), n = nameOf?.(id);
+    return {id, v, drill:!!c && !n, name:n || c?.name || 'Kategorisiz', emoji:n ? '' : c?.emoji || '', color:(nameOf ? CAT_COLORS[i % CAT_COLORS.length] : c?.color) || '#64748B'}; });
+  if (rest > 0) segs.push({id:'_rest', v:rest, name:'Diğerleri', color:'#94A3B8'});
+  const R = 52, C = 2 * Math.PI * R; let off = 0;
+  const arcs = segs.map(s => { const len = s.v / total * C, g = segs.length > 1 ? Math.min(2.5, len / 3) : 0;
+    const el = `<circle r="${R}" cx="66" cy="66" fill="none" stroke="${s.color}" stroke-width="16" stroke-dasharray="${Math.max(len - g, 0.01)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 66 66)"/>`; off += len; return el; }).join('');
+  return `<section class="card"><h3>${title}</h3><div class="donut-wrap">
+    <div class="donut"><svg width="132" height="132" viewBox="0 0 132 132"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--chip)" stroke-width="16"/>${arcs}</svg>
+      <div class="c"><span>Toplam</span><b class="num">${money(total, false)}</b></div></div>
+    <div class="legend">${segs.map(s => `<button class="r" ${s.drill ? `data-action="cat-drill" data-id="${s.id}"` : ''}><i class="dot" style="background:${s.color}"></i><span class="n">${s.emoji ? ico(s.emoji, 'inline') : ''} ${esc(s.name)}</span><span class="p num">%${Math.round(s.v / total * 100)}</span></button>`).join('')}</div>
+  </div></section>`;
+}
 VIEWS.home = () => {
   if (!S.accounts.length) return welcome();
   const st = monthStats(ui.month), net = D.assets + D.debts;
   const nw = money(net).split(',');
-  // donut
-  const sorted = [...st.cats.entries()].sort((a, b) => b[1] - a[1]);
-  const top = sorted.slice(0, 6), rest = sorted.slice(6).reduce((s, x) => s + x[1], 0);
-  const segs = top.map(([id, v]) => ({id, v, name: D.cat.get(id)?.name || 'Kategorisiz', emoji: D.cat.get(id)?.emoji || '', color: D.cat.get(id)?.color || '#64748B'}));
-  if (rest > 0) segs.push({id:'_rest', v:rest, name:'Diğerleri', color:'#94A3B8'});
-  const R = 52, C = 2 * Math.PI * R; let off = 0;
-  const arcs = segs.map(s => { const len = st.exp ? s.v / st.exp * C : 0; const g = segs.length > 1 ? Math.min(2.5, len / 3) : 0; const el = `<circle r="${R}" cx="66" cy="66" fill="none" stroke="${s.color}" stroke-width="16" stroke-dasharray="${Math.max(len - g, 0.01)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 66 66)"/>`; off += len; return el; }).join('');
   // bars: last 6 months
   const months = Array.from({length:6}, (_, i) => shiftMonth(ui.month, i - 5));
   const ms = months.map(m => ({m, ...monthStats(m)}));
@@ -652,13 +669,8 @@ VIEWS.home = () => {
     <div class="tile"><span>Gider</span><b class="num neg">${money(st.exp, false)}</b></div>
     <div class="tile"><span>Fark</span><b class="num ${st.inc - st.exp >= 0 ? 'pos' : 'neg'}">${money(st.inc - st.exp, false)}</b></div>
   </div>
-  <section class="card"><h3>Harcama dağılımı</h3>
-    ${st.exp ? `<div class="donut-wrap">
-      <div class="donut"><svg width="132" height="132" viewBox="0 0 132 132"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--chip)" stroke-width="16"/>${arcs}</svg>
-        <div class="c"><span>Toplam</span><b class="num">${money(st.exp, false)}</b></div></div>
-      <div class="legend">${segs.map(s => `<button class="r" ${s.id[0] !== '_' ? `data-action="cat-drill" data-id="${s.id}"` : ''}><i class="dot" style="background:${s.color}"></i><span class="n">${s.emoji ? ico(s.emoji, 'inline') : ''} ${esc(s.name)}</span><span class="p num">%${Math.round(s.v / st.exp * 100)}</span></button>`).join('')}</div>
-    </div>` : '<div class="empty" style="padding:16px">Bu ay gider yok</div>'}
-  </section>
+  ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
+  ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
   <section class="card"><h3>Son 6 ay</h3>
     <div class="bars">${ms.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inc / maxV * 100}%"></i><i class="e" style="height:${x.exp / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
     <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div>
@@ -740,8 +752,43 @@ VIEWS.txs = () => {
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)}${c.link ? ' · gelir + gider' : ''} ✕</button>` : ''}</div>` : ''}
   <div id="month-wrap">${ui.q ? '' : monthSwitch()}</div>
+  ${c && !ui.q ? catCharts(c) : ''}
   <div id="txlist"></div>`;
 };
+/* charts for one category: its last 12 periods, and how its subcategories split the selected period */
+function catSeries(c, m) {
+  let inn = 0, out = 0;
+  for (const t of D.byMonth.get(m) || []) {
+    if (t.type !== 'income' && t.type !== 'expense') continue;
+    const hit = c.link ? linkOf(t.categoryId) === c.link : (t.categoryId === c.id || D.cat.get(t.categoryId)?.parentId === c.id);
+    if (hit) { if (t.type === 'income') inn += t.amount; else out += t.amount; }
+  }
+  return {inn:Math.max(0, inn), out:Math.max(0, out)};
+}
+function catCharts(c) {
+  const showIn = !!c.link || c.kind === 'income', showOut = !!c.link || c.kind === 'expense';
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(ui.month, i - 11)).map(m => ({m, ...catSeries(c, m)}));
+  const maxV = Math.max(1, ...ser.map(x => Math.max(showIn ? x.inn : 0, showOut ? x.out : 0)));
+  const main = x => c.kind === 'income' && !c.link ? x.inn : c.link ? x.inn - x.out : x.out;
+  const cur = ser[ser.length - 1], avg = ser.reduce((s, x) => s + main(x), 0) / ser.length;
+  const sign = v => c.link ? (v >= 0 ? '+' : '−') + money(Math.abs(v), false) : money(v, false);
+  let html = `<section class="card"><h3>${esc(c.name)}${c.link ? ' · gelir + gider' : ''}</h3>
+    <div class="cat-meta"><span>Bu dönem<b class="num">${sign(main(cur))}</b></span><span>12 dönem ortalaması<b class="num">${sign(avg)}</b></span><span>12 dönem toplamı<b class="num">${sign(ser.reduce((s, x) => s + main(x), 0))}</b></span></div>
+    <div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col">${showIn ? `<i class="g" style="height:${x.inn / maxV * 100}%"></i>` : ''}${showOut ? `<i class="e" style="height:${x.out / maxV * 100}%"></i>` : ''}</div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
+    ${c.link ? '<div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div>' : ''}</section>`;
+  // subcategory split for the selected period
+  const kids = S.categories.filter(x => x.parentId === c.id);
+  if (kids.length && !c.link) {
+    const map = new Map(), kidIds = new Set(kids.map(k => k.id));
+    for (const t of D.byMonth.get(ui.month) || []) {
+      if (t.type !== c.kind) continue;
+      if (kidIds.has(t.categoryId)) map.set(t.categoryId, (map.get(t.categoryId) || 0) + t.amount);
+      else if (t.categoryId === c.id) map.set('_self', (map.get('_self') || 0) + t.amount);
+    }
+    if (map.size > 1) html += donutCard(`${esc(c.name)} · alt kategoriler`, map, '', id => id === '_self' ? 'Alt kategorisiz' : D.cat.get(id)?.name);
+  }
+  return html;
+}
 function accHero(a) {
   const bal = D.bal.get(a.id) || 0, fut = D.future.get(a.id) || 0, isCard = a.type === 'card';
   let h = `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye</div><div class="big-amt num" style="margin-bottom:${isCard || fut ? '12px' : '0'}">${money(bal)}</div>`;
