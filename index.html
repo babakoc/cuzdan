@@ -68,6 +68,22 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .row-actions button{flex:1;height:36px;border-radius:10px;background:var(--chip);font-weight:650;font-size:14px}
 .row-actions button.on{background:var(--accent);color:#fff}
 .empty p{margin:0 0 20px;line-height:1.5}
+.ic{overflow:hidden}
+.ico-img{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
+.ico-img.inline{width:18px;height:18px;border-radius:5px;display:inline-block;vertical-align:-4px}
+.tx-icon{display:flex;flex-direction:column;align-items:center;gap:5px;margin:2px auto -4px}
+.tx-icon .ic-big{width:58px;height:58px;border-radius:18px;display:grid;place-items:center;font-size:30px;overflow:hidden}
+.tx-icon small{font-size:12px;color:var(--accent);font-weight:600}
+.ico-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:6px;margin-bottom:18px}
+.ico-tile{aspect-ratio:1;border-radius:13px;background:var(--card);display:grid;place-items:center;font-size:25px;position:relative;overflow:hidden}
+.ico-tile.on{box-shadow:inset 0 0 0 2.5px var(--accent)}
+.ico-tile.add{color:var(--accent);font-size:26px;border:1.5px dashed var(--muted);background:none}
+.ico-tile.del i{position:absolute;top:3px;right:3px;width:17px;height:17px;border-radius:50%;background:var(--neg);color:#fff;font-size:10px;font-style:normal;display:grid;place-items:center}
+.custom-emoji{display:flex;gap:8px;margin-bottom:18px}
+.custom-emoji input{flex:1;min-width:0;height:44px;border-radius:12px;border:0;background:var(--card);padding:0 12px;outline:none}
+.custom-emoji button{padding:0 16px;border-radius:12px;background:var(--chip);font-weight:650}
+.sub-label.between{display:flex;justify-content:space-between;align-items:center}
+.sub-label button{color:var(--accent);font-weight:600;text-transform:none;letter-spacing:0;font-size:14px}
 
 .card{background:var(--card);border-radius:22px;padding:16px;box-shadow:var(--shadow);margin-top:14px}
 .card h3,.sec-title{margin:0 0 12px;font-size:17px;font-weight:700;letter-spacing:-.01em}
@@ -195,6 +211,7 @@ details.hidden-accs summary::-webkit-details-marker{display:none}
 <div class="loading" id="loading">İçe aktarılıyor…</div>
 <input type="file" id="file-mm" accept=".mmbak,.sqlite,.db,application/octet-stream" hidden>
 <input type="file" id="file-json" accept=".json,application/json" hidden>
+<input type="file" id="file-icon" accept="image/*" hidden>
 
 <script>
 'use strict';
@@ -256,7 +273,43 @@ const DB = {
   async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 };
-const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], meta:{}});
+const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], icons:{}, meta:{}});
+
+/* ---------- icons ----------
+   An icon value is either an emoji or "img:<id>", pointing at an uploaded picture in S.icons.
+   Categories carry the default icon; a transaction or recurring rule may override it with t.icon. */
+const ICON_POOL = [
+  ['Yemek ve içecek', '🛒 🍽️ 🍔 🍕 🌮 🥙 🍣 🍜 🥗 🥐 🍰 🍩 ☕ 🧋 🍺 🍷 🥂 🍸 🧃 🍎 🥩 🧀 🍫 🍿'],
+  ['Alışveriş', '🛍️ 👕 👖 👗 👟 👜 🕶️ 💄 💍 ⌚ 🎁 📦 🧴 🧼'],
+  ['Ulaşım', '🚗 ⛽ 🚕 🚌 🚇 🚆 ✈️ 🛵 🚲 🛴 🅿️ 🚢 🔧 🚙'],
+  ['Ev ve fatura', '🏠 🔑 💡 🔥 💧 📶 📱 📺 🛋️ 🧹 🧺 🪴 🛠️ 🔌'],
+  ['Sağlık ve bakım', '💊 🏥 🩺 🦷 👓 💈 💅 🧘 🏋️ 🏃 🧖 🩹'],
+  ['Eğlence ve hobi', '🎬 🎵 🎧 🎮 🎨 📷 🎉 🎟️ 🎲 ⚽ 🏀 🎾 🎤 🎸 🏖️ 🏕️ 🧳'],
+  ['Eğitim ve iş', '📚 🎓 ✏️ 💻 🖨️ 💼 🗂️ 📝'],
+  ['Finans', '💰 💵 💳 🏦 📈 📉 🪙 💸 🧾 🤝 🏧 💹'],
+  ['Aile ve sosyal', '👶 🧸 🐶 🐱 🎂 💐 ❤️ 👪 🙏'],
+  ['Diğer', '⭐ ✅ 📌 🔔 🌱 ☀️ 🌙 🔁 ⇄ ❓ 🏷️']
+].map(([g, s]) => [g, s.split(' ')]);
+function ico(v, cls = '') {
+  if (v && v.startsWith('img:')) { const u = S.icons?.[v.slice(4)]; return u ? `<img class="ico-img ${cls}" src="${u}" alt="">` : '•'; }
+  return esc(v || '•');
+}
+const firstGrapheme = s => window.Intl?.Segmenter ? [...new Intl.Segmenter('tr', {granularity:'grapheme'}).segment(s)][0]?.segment || '' : [...s][0] || '';
+// crops the centre square and scales it down, so a phone photo becomes a few-KB icon
+function resizeImage(file, size) {
+  return new Promise((res, rej) => {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement('canvas');
+      c.width = c.height = size;
+      const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
+      g.drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size);
+      URL.revokeObjectURL(u); res(c.toDataURL('image/png'));
+    };
+    img.onerror = () => { URL.revokeObjectURL(u); rej(new Error('Görsel okunamadı')); };
+    img.src = u;
+  });
+}
 let S = emptyState();
 let saveTimer;
 function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => DB.set('state', S).catch(e => toast('Kaydedilemedi: ' + e.message)), 150); }
@@ -338,7 +391,7 @@ function ruleDesc(r) {
   return `Her ayın ${r.anchorDay}. günü`;
 }
 const ruleTx = (r, date) => ({id:uid(), type:r.type, amount:r.amount, accountId:r.accountId, toAccountId:r.type === 'transfer' ? r.toAccountId : null,
-  categoryId:r.type === 'transfer' ? null : r.categoryId, date, note:r.note || '', memo:'', ts:Date.now(), recurringId:r.id});
+  categoryId:r.type === 'transfer' ? null : r.categoryId, date, note:r.note || '', memo:'', ts:Date.now(), recurringId:r.id, icon:r.icon || null});
 // adds every automatic occurrence that has come due; runs on open and when the app returns to the foreground
 function runRecurring() {
   const t = todayStr(); let n = 0;
@@ -353,7 +406,7 @@ function runRecurring() {
 const pendingRules = () => (S.rules || []).filter(r => !r.auto && ruleActive(r) && r.nextDate <= todayStr());
 function ruleLook(r) {
   const isT = r.type === 'transfer', c = D.cat.get(r.categoryId), tc = topCat(r.categoryId);
-  return {icon:isT ? '⇄' : (c?.emoji || tc?.emoji || '•'), color:isT ? '#64748B' : (tc?.color || '#64748B'),
+  return {icon:r.icon || (isT ? '⇄' : (c?.emoji || tc?.emoji || '•')), color:isT ? '#64748B' : (tc?.color || '#64748B'),
     title:r.note || (isT ? 'Transfer' : c?.name || 'Kategorisiz'),
     acc:isT ? `${accName(r.accountId)} → ${accName(r.toAccountId)}` : accName(r.accountId)};
 }
@@ -377,7 +430,7 @@ function upcoming(days) {
 function upRow(u) {
   const late = daysUntil(u.date) < 0;
   const amt = u.transfer ? money(Math.abs(u.amount)) : (u.amount >= 0 ? '+' : '−') + money(Math.abs(u.amount));
-  return `<button class="row" ${u.action}><div class="ic" style="background:${u.color}22;color:${u.color}">${esc(u.icon)}</div>
+  return `<button class="row" ${u.action}><div class="ic" style="background:${u.color}22;color:${u.color}">${ico(u.icon)}</div>
     <div class="t"><b>${esc(u.title)}</b><small>${esc(u.sub)}</small></div>
     <div class="a num ${u.amount > 0 && !u.transfer ? 'pos' : ''}">${amt}<small class="${late ? 'neg' : ''}">${relDay(u.date)}</small></div></button>`;
 }
@@ -413,7 +466,7 @@ const monthSwitch = () => `<div class="month"><button data-action="month" data-d
 function txRow(t, ctxAcc) {
   let icon, color, title, sub, amt, cls = '';
   if (t.type === 'transfer') {
-    icon = '⇄'; color = '#64748B';
+    icon = t.icon || '⇄'; color = '#64748B';
     title = t.note || 'Transfer';
     sub = `${accName(t.accountId)} → ${accName(t.toAccountId)}`;
     if (ctxAcc === t.accountId) { amt = '−' + money(t.amount); } else if (ctxAcc === t.toAccountId) { amt = '+' + money(t.amount); cls = 'pos'; } else amt = money(t.amount);
@@ -422,7 +475,7 @@ function txRow(t, ctxAcc) {
     amt = (t.amount >= 0 ? '+' : '−') + money(Math.abs(t.amount)); cls = t.amount >= 0 ? 'pos' : '';
   } else {
     const c = D.cat.get(t.categoryId), tc = topCat(t.categoryId);
-    icon = c?.emoji || tc?.emoji || '•'; color = tc?.color || '#64748B';
+    icon = t.icon || c?.emoji || tc?.emoji || '•'; color = tc?.color || '#64748B';
     title = t.note || c?.name || 'Kategorisiz';
     sub = `${t.note ? catPath(t.categoryId) + ' · ' : (c?.parentId ? (D.cat.get(c.parentId)?.name + ' · ') : '')}${accName(t.accountId)}`;
     const v = t.type === 'income' ? t.amount : -t.amount; // refunds are negative expenses
@@ -430,7 +483,7 @@ function txRow(t, ctxAcc) {
   }
   const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row" data-action="edit-tx" data-id="${t.id}">
-    <div class="ic" style="background:${color}22;color:${color}">${esc(icon)}</div>
+    <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
     <div class="t"><b>${esc(title)}${planned}</b><small>${esc(sub)}</small></div>
     <div class="a num ${cls}">${amt}</div></button>`;
 }
@@ -470,7 +523,7 @@ VIEWS.home = () => {
     ${st.exp ? `<div class="donut-wrap">
       <div class="donut"><svg width="132" height="132" viewBox="0 0 132 132"><circle r="${R}" cx="66" cy="66" fill="none" stroke="var(--chip)" stroke-width="16"/>${arcs}</svg>
         <div class="c"><span>Toplam</span><b class="num">${money(st.exp, false)}</b></div></div>
-      <div class="legend">${segs.map(s => `<button class="r" ${s.id[0] !== '_' ? `data-action="cat-drill" data-id="${s.id}"` : ''}><i class="dot" style="background:${s.color}"></i><span class="n">${esc(s.emoji)} ${esc(s.name)}</span><span class="p num">%${Math.round(s.v / st.exp * 100)}</span></button>`).join('')}</div>
+      <div class="legend">${segs.map(s => `<button class="r" ${s.id[0] !== '_' ? `data-action="cat-drill" data-id="${s.id}"` : ''}><i class="dot" style="background:${s.color}"></i><span class="n">${s.emoji ? ico(s.emoji, 'inline') : ''} ${esc(s.name)}</span><span class="p num">%${Math.round(s.v / st.exp * 100)}</span></button>`).join('')}</div>
     </div>` : '<div class="empty" style="padding:16px">Bu ay gider yok</div>'}
   </section>
   <section class="card"><h3>Son 6 ay</h3>
@@ -600,7 +653,7 @@ VIEWS.recurring = () => {
     const L = ruleLook(r), sign = r.type === 'income' ? '+' : r.type === 'transfer' ? '' : '−';
     const when = !ruleActive(r) ? (r.paused ? 'Duraklatıldı' : 'Bitti') : pending ? `${shortDate(r.nextDate)} · onay bekliyor` : `Sonraki: ${relDay(r.nextDate)}`;
     return `<button class="row" data-action="edit-rule" data-id="${r.id}" style="${ruleActive(r) ? '' : 'opacity:.5'}">
-      <div class="ic" style="background:${L.color}22;color:${L.color}">${esc(L.icon)}</div>
+      <div class="ic" style="background:${L.color}22;color:${L.color}">${ico(L.icon)}</div>
       <div class="t"><b>${esc(L.title)}${r.auto ? '' : '<span class="badge">Elle onay</span>'}</b><small>${esc(ruleDesc(r))} · ${esc(L.acc)}</small></div>
       <div class="a num ${r.type === 'income' ? 'pos' : ''}">${sign}${money(r.amount)}<small>${when}</small></div></button>
       ${pending ? `<div class="row-actions"><button data-action="rule-skip" data-id="${r.id}">Bu sefer atla</button><button class="on" data-action="rule-post" data-id="${r.id}">Ekle</button></div>` : ''}`;
@@ -668,7 +721,7 @@ function saveRule() {
   S.rules = S.rules || [];
   const old = S.rules.find(x => x.id === d.id);
   const r = {id:d.id, type:d.type, amount, accountId:d.accountId, toAccountId:d.type === 'transfer' ? d.toAccountId : null,
-    categoryId:d.type === 'transfer' ? null : d.categoryId, note:(d.note || '').trim(), freq:d.freq, startDate:d.startDate,
+    categoryId:d.type === 'transfer' ? null : d.categoryId, note:(d.note || '').trim(), icon:d.icon || null, freq:d.freq, startDate:d.startDate,
     anchorDay:+d.startDate.slice(8), endDate:d.endDate || null, auto:!!d.auto, paused:!!d.paused};
   if (old && old.startDate === r.startDate && old.freq === r.freq) r.nextDate = old.nextDate;
   else {
@@ -690,8 +743,29 @@ function txSheet(t) {
   drawTxSheet();
   if (!t) setTimeout(() => $('#f-amt')?.focus(), 350);
 }
+/* icon picker: shown inside the current sheet; returns to the form it was opened from */
+function iconCtx() {
+  const d = sheetState;
+  if (d.mode === 'edit') return {cur:d.cat.emoji || '', def:null, set:v => { d.cat.emoji = v; }, redraw:drawCatsSheet};
+  const c = D.cat.get(d.categoryId), tc = topCat(d.categoryId);
+  return {cur:d.icon || '', def:d.type === 'transfer' ? '⇄' : (c?.emoji || tc?.emoji || '•'), set:v => { d.icon = v || null; }, redraw:drawTxSheet};
+}
+function drawIconPicker() {
+  const d = sheetState, ctx = iconCtx(), mine = Object.keys(S.icons || {});
+  const tile = v => `<button class="ico-tile ${ctx.cur === v ? 'on' : ''}" data-action="icon-pick" data-v="${esc(v)}">${ico(v)}</button>`;
+  openSheet(`
+    <div class="sheet-head"><button data-action="icon-cancel">Geri</button><h2>Simge seç</h2><span style="width:44px"></span></div>
+    ${ctx.def !== null ? `<div class="list" style="margin-bottom:16px"><button class="row" data-action="icon-pick" data-v=""><div class="ic" style="background:var(--chip)">${ico(ctx.def)}</div><div class="t"><b>Kategorinin simgesi</b><small>Varsayılanı kullan</small></div>${!ctx.cur ? '<b style="color:var(--accent)">✓</b>' : ''}</button></div>` : ''}
+    <div class="sub-label between"><span>Yüklediklerim</span>${mine.length ? `<button data-action="icon-manage">${d.iconManage ? 'Bitti' : 'Düzenle'}</button>` : ''}</div>
+    <div class="ico-grid"><button class="ico-tile add" data-action="icon-upload" aria-label="Görsel yükle">＋</button>${mine.map(id => d.iconManage
+      ? `<button class="ico-tile del" data-action="icon-del" data-id="${id}">${ico('img:' + id)}<i>✕</i></button>` : tile('img:' + id)).join('')}</div>
+    <div class="custom-emoji"><input id="emoji-in" placeholder="Ya da bir emoji yaz" autocomplete="off"><button data-action="icon-custom">Kullan</button></div>
+    ${ICON_POOL.map(([g, list]) => `<div class="sub-label">${g}</div><div class="ico-grid">${list.map(tile).join('')}</div>`).join('')}`);
+}
 function drawTxSheet() {
+  if (sheetState.picking) return drawIconPicker();
   const d = sheetState, kind = d.type === 'income' ? 'income' : 'expense';
+  const ctx = iconCtx(), shown = ctx.cur || ctx.def, tcol = d.type === 'transfer' ? '#64748B' : (topCat(d.categoryId)?.color || '#64748B');
   const visibleCat = x => !x.hidden || x.id === d.categoryId || x.id === d.catParent;
   const parents = S.categories.filter(x => x.kind === kind && !x.parentId && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const children = d.catParent ? S.categories.filter(x => x.parentId === d.catParent && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) : [];
@@ -699,6 +773,7 @@ function drawTxSheet() {
   openSheet(`
     <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isRule ? (d.isNew ? 'Yeni tekrar' : 'Tekrarlayan') : d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
     ${isAdj ? '' : `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>`}
+    ${isAdj ? '' : `<button class="tx-icon" data-action="icon-open"><span class="ic-big" style="background:${tcol}22;color:${tcol}">${ico(shown)}</span><small>${ctx.cur ? 'Özel simge' : 'Simgeyi değiştir'}</small></button>`}
     <div class="amount"><input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
     <div class="form">
       <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId">${accOptions(d.accountId)}</select></div>
@@ -714,7 +789,7 @@ function drawTxSheet() {
     </div>
     ${d.type === 'transfer' || isAdj ? '' : `
       <div class="sub-label">Kategori</div>
-      <div class="cats">${parents.map(p => `<button class="chip ${d.catParent === p.id ? 'on' : ''}" data-action="pick-parent" data-id="${p.id}">${esc(p.emoji || '')} ${esc(p.name)}</button>`).join('')}</div>
+      <div class="cats">${parents.map(p => `<button class="chip ${d.catParent === p.id ? 'on' : ''}" data-action="pick-parent" data-id="${p.id}">${p.emoji ? ico(p.emoji, 'inline') : ''} ${esc(p.name)}</button>`).join('')}</div>
       ${children.length ? `<div class="sub-label">Alt kategori</div><div class="cats">${children.map(ch => `<button class="chip ${d.categoryId === ch.id ? 'on' : ''}" data-action="pick-cat" data-id="${ch.id}">${esc(ch.name)}</button>`).join('')}</div>` : ''}`}
     ${d.isRule ? `<p class="note">Ayın 29–31'i gibi günler kısa aylarda ayın son gününe kayar. Geçmiş tarihli tekrarlar geriye dönük eklenmez.</p>` : ''}
     ${d.isNew ? '' : `<button class="secondary danger" data-action="del-tx">${d.isRule ? 'Tekrarı sil (eklenmiş işlemler kalır)' : 'İşlemi sil'}</button>`}
@@ -755,15 +830,18 @@ function catsSheet() {
   sheetState = {mode:'list', kind:'expense'};
   drawCatsSheet();
 }
+// icon a category gets when none was picked: guessed from its name, else its parent's, else a tag
+const autoCatIcon = c => { const g = guessEmoji(c.name || ''); return g !== '•' ? g : (S.categories.find(p => p.id === c.parentId)?.emoji || '🏷️'); };
 function drawCatsSheet() {
+  if (sheetState.picking) return drawIconPicker();
   const d = sheetState;
   if (d.mode === 'list') {
     const parents = S.categories.filter(c => c.kind === d.kind && !c.parentId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const row = (c, nested) => `<button class="row ${nested ? 'nested' : ''}" data-action="edit-cat" data-id="${c.id}" style="${c.hidden ? 'opacity:.45' : ''}"><div class="ic" style="background:${(c.color || '#64748B')}22">${esc(c.emoji || '•')}</div><div class="t"><b>${esc(c.name)}</b>${c.hidden ? '<small>Gizli</small>' : ''}</div>${ICON.rowChev}</button>`;
+    const row = (c, nested) => `<button class="row ${nested ? 'nested' : ''}" data-action="edit-cat" data-id="${c.id}" style="${c.hidden ? 'opacity:.45' : ''}"><div class="ic" style="background:${(c.color || '#64748B')}22">${ico(c.emoji)}</div><div class="t"><b>${esc(c.name)}</b>${c.hidden ? '<small>Gizli</small>' : ''}</div>${ICON.rowChev}</button>`;
     openSheet(`
       <div class="sheet-head"><button data-action="close-sheet">Kapat</button><h2>Kategoriler</h2><button data-action="new-cat">Ekle</button></div>
       <div class="seg">${[['expense', 'Gider'], ['income', 'Gelir']].map(([k, l]) => `<button class="${d.kind === k ? 'on' : ''}" data-action="cat-kind" data-v="${k}">${l}</button>`).join('')}</div>
-      ${parents.map(p => `<div class="list" style="margin-bottom:10px">${row(p)}${S.categories.filter(c => c.parentId === p.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(c => row(c, true)).join('')}</div>`).join('')}`);
+      ${parents.map(p => `<div class="list" style="margin-bottom:10px">${row(p)}${S.categories.filter(c => c.parentId === p.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(c => row(c, true)).join('')}<button class="row nested" data-action="new-cat" data-parent="${p.id}"><div class="ic" style="background:var(--chip);color:var(--accent);font-size:20px">＋</div><div class="t"><b style="color:var(--accent);font-weight:600">Alt kategori ekle</b></div></button></div>`).join('')}`);
   } else {
     const c = d.cat, parents = S.categories.filter(x => x.kind === c.kind && !x.parentId && x.id !== c.id);
     const hasChildren = S.categories.some(x => x.parentId === c.id);
@@ -771,7 +849,7 @@ function drawCatsSheet() {
       <div class="sheet-head"><button data-action="cat-back">Geri</button><h2>${c.isNew ? 'Yeni kategori' : 'Kategori'}</h2><button data-action="save-cat" style="font-weight:700">Kaydet</button></div>
       <div class="form">
         <div class="field"><label>Ad</label><input data-cf="name" value="${esc(c.name)}"></div>
-        <div class="field"><label>Simge</label><input data-cf="emoji" value="${esc(c.emoji || '')}" placeholder="Emoji"></div>
+        <button class="field" data-action="icon-open" style="width:100%;text-align:left"><label>Varsayılan simge</label><span style="flex:1;text-align:right;color:var(--muted);font-size:13px">${c.emoji ? '' : 'Seçmezsen addan tahmin edilir'}</span><span class="ic" style="background:${(c.color || '#64748B')}22">${ico(c.emoji || autoCatIcon(c))}</span>${ICON.rowChev}</button>
         ${hasChildren ? '' : `<div class="field"><label>Üst kategori</label><select data-cf="parentId"><option value="">Yok (ana kategori)</option>${parents.map(p => `<option value="${p.id}" ${c.parentId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>`}
         <div class="field"><label>Gizle</label><span style="flex:1"></span><input type="checkbox" data-cf="hidden" ${c.hidden ? 'checked' : ''}></div>
       </div>
@@ -781,6 +859,27 @@ function drawCatsSheet() {
 
 /* ---------- actions ---------- */
 const A = {
+  'icon-open'() { sheetState.picking = true; sheetState.iconManage = false; drawIconPicker(); },
+  'icon-cancel'() { sheetState.picking = false; iconCtx().redraw(); },
+  'icon-pick'(el) { const c = iconCtx(); c.set(el.dataset.v); sheetState.picking = false; c.redraw(); },
+  'icon-custom'() {
+    const v = firstGrapheme(($('#emoji-in')?.value || '').trim());
+    if (!v || /^[\p{L}\p{N}]$/u.test(v)) return toast('Bir emoji yaz');
+    const c = iconCtx(); c.set(v); sheetState.picking = false; c.redraw();
+  },
+  'icon-upload'() { $('#file-icon').click(); },
+  'icon-manage'() { sheetState.iconManage = !sheetState.iconManage; drawIconPicker(); },
+  'icon-del'(el) {
+    if (!confirm('Bu simge silinsin mi? Kullanıldığı yerlerde kategorinin simgesi görünür.')) return;
+    const ref = 'img:' + el.dataset.id;
+    delete S.icons[el.dataset.id];
+    for (const t of S.txs) if (t.icon === ref) delete t.icon;
+    for (const r of S.rules || []) if (r.icon === ref) r.icon = null;
+    for (const c of S.categories) if (c.emoji === ref) c.emoji = guessEmoji(c.name);
+    if (sheetState.icon === ref) sheetState.icon = null;
+    if (sheetState.cat?.emoji === ref) sheetState.cat.emoji = guessEmoji(sheetState.cat.name);
+    save(); derive(); drawIconPicker();
+  },
   back() { ui.tab = ui.prevTab && ui.prevTab !== 'recurring' ? ui.prevTab : 'settings'; render(); window.scrollTo(0, 0); },
   'add-rule'() { if (!S.accounts.length) return toast('Önce bir hesap ekle'); ruleSheet(); },
   'edit-rule'(el) { ruleSheet(S.rules.find(r => r.id === el.dataset.id)); },
@@ -818,6 +917,7 @@ const A = {
     const t = {id:d.id, type:d.type, amount, accountId:d.accountId, toAccountId:d.type === 'transfer' ? d.toAccountId : null,
       categoryId:d.type === 'transfer' || d.type === 'adjust' ? null : d.categoryId, date:d.date || todayStr(), note:(d.note || '').trim(), memo:d.memo || '', ts:d.ts || Date.now()};
     if (d.recurringId) t.recurringId = d.recurringId;
+    if (d.icon && d.type !== 'adjust') t.icon = d.icon;
     const i = S.txs.findIndex(x => x.id === t.id);
     if (i >= 0) S.txs[i] = t; else S.txs.push(t);
     S.meta.lastAccount = t.accountId;
@@ -859,11 +959,17 @@ const A = {
   'manage-cats'() { catsSheet(); },
   'cat-kind'(el) { sheetState.kind = el.dataset.v; drawCatsSheet(); },
   'edit-cat'(el) { const c = S.categories.find(x => x.id === el.dataset.id); sheetState = {mode:'edit', kind:c.kind, cat:{...c}}; drawCatsSheet(); },
-  'new-cat'() { sheetState = {mode:'edit', kind:sheetState.kind, cat:{id:uid(), name:'', emoji:'', kind:sheetState.kind, parentId:null, color:PALETTE[S.categories.length % PALETTE.length], hidden:false, order:999, isNew:true}}; drawCatsSheet(); },
+  'new-cat'(el) {
+    const parent = S.categories.find(p => p.id === el.dataset.parent);
+    sheetState = {mode:'edit', kind:sheetState.kind, cat:{id:uid(), name:'', emoji:'', kind:sheetState.kind, parentId:parent?.id || null,
+      color:parent?.color || CAT_COLORS[S.categories.filter(c => !c.parentId).length % CAT_COLORS.length], hidden:false, order:999, isNew:true}};
+    drawCatsSheet();
+  },
   'cat-back'() { sheetState = {mode:'list', kind:sheetState.kind}; drawCatsSheet(); },
   'save-cat'() {
     const c = sheetState.cat; if (!c.name.trim()) return toast('Ad gir');
     const {isNew, ...clean} = c; clean.name = c.name.trim(); clean.parentId = c.parentId || null;
+    if (!clean.emoji) clean.emoji = autoCatIcon(clean);
     if (!clean.color) clean.color = hashColor(clean.id);
     const i = S.categories.findIndex(x => x.id === c.id); if (i >= 0) S.categories[i] = clean; else S.categories.push(clean);
     save(); derive(); sheetState = {mode:'list', kind:c.kind}; drawCatsSheet(); render(); toast('Kaydedildi');
@@ -907,6 +1013,14 @@ async function exportJSON() {
     save(); render(); toast('Yedek hazır');
   } catch (err) { if (err.name !== 'AbortError') toast('Yedek alınamadı: ' + err.message); }
 }
+$('#file-icon').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !sheetState) return;
+  try {
+    const url = await resizeImage(f, 128), id = uid();
+    S.icons = S.icons || {}; S.icons[id] = url; save();
+    const c = iconCtx(); c.set('img:' + id); sheetState.picking = false; c.redraw(); toast('Simge eklendi');
+  } catch (err) { toast(err.message); }
+});
 $('#file-json').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   try {
@@ -999,7 +1113,11 @@ $('#file-mm').addEventListener('change', async e => {
     const rules = (S.rules || []).filter(r => ids.has(r.accountId) && (!r.toAccountId || ids.has(r.toAccountId)));
     const keep = new Set(rules.map(r => r.id));
     data.txs.push(...S.txs.filter(t => keep.has(t.recurringId)));
-    S = {...emptyState(), ...data, rules, meta:{...S.meta, ...data.meta}};
+    // keep icons the user chose: category defaults and per-transaction overrides (ids are stable across imports)
+    const oldCat = new Map(S.categories.map(c => [c.id, c.emoji])), oldTx = new Map(S.txs.filter(t => t.icon).map(t => [t.id, t.icon]));
+    for (const c of data.categories) if (oldCat.get(c.id)) c.emoji = oldCat.get(c.id);
+    for (const t of data.txs) if (oldTx.get(t.id)) t.icon = oldTx.get(t.id);
+    S = {...emptyState(), ...data, rules, icons:S.icons || {}, meta:{...S.meta, ...data.meta}};
     await DB.set('state', S);
     ui.tab = 'home'; ui.month = curMonth(); render();
     toast(`${data.accounts.length} hesap, ${data.categories.length} kategori, ${data.txs.length.toLocaleString('tr-TR')} işlem aktarıldı`);
