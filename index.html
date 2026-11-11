@@ -155,18 +155,6 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .cat-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:-2px 0 12px}
 .cat-meta span{font-size:11px;color:var(--muted);font-weight:600}
 .cat-meta b{display:block;font-size:15px;color:var(--text);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mrows{display:flex;flex-direction:column;gap:4px}
-.mrow{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:10px;padding:7px 6px;border-radius:12px;text-align:left;width:100%}
-.mrow.cur{background:var(--chip)}
-.mrow .ml{font-weight:700;font-size:14px;line-height:1.1}
-.mrow .ml small{display:block;font-size:10px;color:var(--muted);font-weight:600}
-.mrow .mb{display:flex;flex-direction:column;gap:3px;min-width:0}
-.mrow .mb>span{display:flex;align-items:center;gap:6px;min-width:0}
-.mrow .mb i{display:block;height:8px;border-radius:4px;max-width:58%;min-width:2px;flex:0 0 auto}
-.mrow .mb i.g{background:var(--pos)} .mrow .mb i.e{background:var(--neg)}
-.mrow .mb em{font-style:normal;font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap}
-.mrow .mn{font-weight:700;font-size:13px;text-align:right;white-space:nowrap}
-.mrow .mn small{display:block;font-size:10px;color:var(--muted);font-weight:600}
 .row.upcoming{opacity:.78}
 .row.upcoming .ic{outline:1.5px dashed currentColor;outline-offset:-1.5px}
 .badge.soon{background:rgba(76,91,255,.15);color:var(--accent)}
@@ -750,9 +738,6 @@ VIEWS.home = () => {
   const st = monthStats(ui.month), net = D.assets + D.debts;
   const nw = money(net).split(',');
   // bars: last 6 months
-  const months = Array.from({length:6}, (_, i) => shiftMonth(ui.month, i - 5));
-  const ms = months.map(m => ({m, ...monthStats(m)}));
-  const maxV = Math.max(1, ...ms.map(x => Math.max(x.exp, x.inc)));
   const recent = (D.byMonth.get(ui.month) || []).filter(t => t.date <= D.today || ui.month !== curMonth()).slice(0, 6);
   return `
   <header class="big"><div><div class="eyebrow">${new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'})}</div><h1>Özet</h1></div></header>
@@ -770,13 +755,7 @@ VIEWS.home = () => {
   </div>
   ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
   ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
-  <section class="card"><h3>Son 6 dönem</h3>
-    <div class="mrows">${ms.slice().reverse().map(x => { const d = x.inc - x.exp; return `<button class="mrow ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}">
-      <span class="ml">${monthShort(x.m)}<small>${x.m.slice(0, 4)}</small></span>
-      <span class="mb"><span><i class="g" style="width:${x.inc / maxV * 100}%"></i><em class="num">${money(x.inc, false)}</em></span><span><i class="e" style="width:${x.exp / maxV * 100}%"></i><em class="num">${money(x.exp, false)}</em></span></span>
-      <span class="mn num ${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d), false)}<small>fark</small></span></button>`; }).join('')}</div>
-    <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span><span style="margin-left:auto">Döneme dokun, o döneme geç</span></div>
-  </section>
+  ${homeChart()}
   <div class="sec-title">Son işlemler <a href="#" data-action="drill-txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t, null, true)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
 };
@@ -878,6 +857,21 @@ function catSeries(c, m) {
   }
   return {inn:Math.max(0, inn), out:Math.max(0, out)};
 }
+// summary chart: income and expense of 12 periods; its window moves only with its own arrows
+function homeChart() {
+  if (!ui.homeEnd) ui.homeEnd = ui.month;
+  if (ui.month > ui.homeEnd) ui.homeEnd = ui.month; else if (ui.month < shiftMonth(ui.homeEnd, -11)) ui.homeEnd = shiftMonth(ui.month, 11);
+  const end = ui.homeEnd, start = shiftMonth(end, -11), yy = m => `${monthShort(m)} ${m.slice(2, 4)}`;
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...monthStats(m)}));
+  const maxV = Math.max(1, ...ser.map(x => Math.max(x.inc, x.exp)));
+  const act = ser.filter(x => x.inc > 0.004 || x.exp > 0.004), n = act.length || 1;
+  const ai = act.reduce((s, x) => s + x.inc, 0) / n, ae = act.reduce((s, x) => s + x.exp, 0) / n, d = ai - ae;
+  return `<section class="card"><h3>Gelir ve gider</h3>
+    <div class="chart-nav"><button data-action="chart-shift" data-k="home" data-d="-3" aria-label="3 dönem geri">${ICON.chevL}</button><span>${yy(start)} – ${yy(end)}</span><button data-action="chart-shift" data-k="home" data-d="3" aria-label="3 dönem ileri" ${end >= chartMax() ? 'disabled' : ''}>${ICON.chevR}</button></div>
+    <div class="cat-meta"><span>Ort. gelir<small>${act.length} dönem</small><b class="num pos">${money(ai, false)}</b></span><span>Ort. gider<small>${act.length} dönem</small><b class="num neg">${money(ae, false)}</b></span><span>Ort. fark<small>dönem başına</small><b class="num ${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d), false)}</b></span></div>
+    <div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inc / maxV * 100}%"></i><i class="e" style="height:${x.exp / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
+    <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span><span style="margin-left:auto">Çubuğa dokun, o döneme geç</span></div></section>`;
+}
 const chartMax = () => { const k = [...D.byMonth.keys()].sort().pop() || curMonth(); return k > curMonth() ? k : curMonth(); };
 function catCharts(c) {
   const showIn = !!c.link || c.kind === 'income', showOut = !!c.link || c.kind === 'expense';
@@ -952,9 +946,12 @@ function renderTxList() {
   if (lk) {
     let inn = 0, out = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
     sum = `<div class="link-sum"><span>Gelen<b class="num pos">+${money(inn, false)}</b></span><span>Giden<b class="num neg">−${money(out, false)}</b></span><span>Net<b class="num ${inn - out >= 0 ? 'pos' : 'neg'}">${inn - out >= 0 ? '+' : '−'}${money(Math.abs(inn - out), false)}</b></span></div>`;
+  } else if (!ui.catFilter) { // income / expense / difference of what the list shows (whole period, an account, or a search)
+    let inc = 0, exp = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
+    sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
   const total = list.length; list = list.slice(0, 400);
-  if (!list.length) { $('#txlist').innerHTML = '<div class="empty"><div class="big">🧾</div>İşlem bulunamadı</div>'; return; }
+  if (!list.length) { $('#txlist').innerHTML = sum + '<div class="empty"><div class="big">🧾</div>İşlem bulunamadı</div>'; return; }
   let html = sum, day = null, buf = [];
   const flush = () => {
     if (!buf.length) return;
@@ -1388,8 +1385,8 @@ const A = {
   'pick-year'(el) { sheetState.year += +el.dataset.d; drawPeriodPicker(); },
   'pick-month'(el) { ui.month = el.dataset.m; closeSheet(); const y = window.scrollY; render(); window.scrollTo(0, y); },
   'goto-month'(el) { ui.month = el.dataset.m; const y = window.scrollY; render(); window.scrollTo(0, y); },
-  'chart-shift'(el) { const max = chartMax(); let e = shiftMonth(ui.chartEnd || ui.month, +el.dataset.d); if (e > max) e = max;
-    ui.chartEnd = e; const s0 = shiftMonth(e, -11); if (ui.month > e) ui.month = e; else if (ui.month < s0) ui.month = s0; // keep the selection inside the window
+  'chart-shift'(el) { const key = el.dataset.k === 'home' ? 'homeEnd' : 'chartEnd', max = chartMax(); let e = shiftMonth(ui[key] || ui.month, +el.dataset.d); if (e > max) e = max;
+    ui[key] = e; const s0 = shiftMonth(e, -11); if (ui.month > e) ui.month = e; else if (ui.month < s0) ui.month = s0; // keep the selection inside the window
     const y = window.scrollY; render(); window.scrollTo(0, y); },
   'cat-drill'(el) { drillTo(() => { ui.catFilter = el.dataset.id; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'note-drill'(el) { drillTo(() => { ui.noteFilter = el.dataset.note; ui.q = ''; }); },
