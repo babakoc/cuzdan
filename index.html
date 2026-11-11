@@ -981,6 +981,23 @@ VIEWS.trend = () => {
   <p class="note">Bir döneme dokunursan sayfadaki dağılımlar o döneme geçer.</p>`;
 };
 
+// "Sıfırdan başla": a few standard accounts and top-level categories (no subcategories); all editable later.
+// Ids start with "def-" so a later Money Manager import can drop the unused ones.
+const DEFAULT_ACCOUNTS = [['Nakit', 'cash', '#12A26B'], ['Banka hesabı', 'bank', '#4C5BFF'], ['Kredi kartı', 'card', '#E5484D']];
+const DEFAULT_CATS = {
+  expense: [['Market', '🛒'], ['Yemek', '🍽️'], ['Ulaşım', '🚗'], ['Faturalar', '🧾'], ['Kira', '🏠'], ['Sağlık', '💊'], ['Giyim', '👕'],
+    ['Eğlence', '🎉'], ['Abonelikler', '📺'], ['Eğitim', '📚'], ['Hediye', '🎁'], ['Diğer', '📦']],
+  income: [['Maaş', '💼'], ['Ek gelir', '💰'], ['Hediye', '🎁'], ['Diğer', '📦']]
+};
+function seedDefaults() {
+  S.accounts = DEFAULT_ACCOUNTS.map(([name, type, color], i) => ({id:`def-acc-${type}`, name, type, parentId:null, opening:0, limit:null, color,
+    hidden:false, order:i, statementDay:null, dueDay:null, icon:null}));
+  S.categories = [];
+  for (const kind of ['expense', 'income']) DEFAULT_CATS[kind].forEach(([name, emoji], i) =>
+    S.categories.push({id:`def-${kind}-${i}`, name, kind, parentId:null, emoji, color:CAT_COLORS[i % CAT_COLORS.length], hidden:false, order:i}));
+  ensureLinks(); S.meta.linksV1 = true; S.meta.cutDayFix = true;
+}
+
 function welcome() {
   return `<div class="welcome">
     <div style="font-size:64px">👛</div>
@@ -988,7 +1005,7 @@ function welcome() {
     <p>Money Manager yedeğini (.mmbak) içe aktararak tüm hesaplarını, kategorilerini ve işlemlerini taşıyabilirsin.</p>
     <button class="primary" data-action="import-mm">Money Manager yedeğini seç</button>
     <button class="secondary" data-action="import-json">Cüzdan yedeğinden geri yükle</button>
-    <button class="secondary" data-action="add-acc">Sıfırdan başla</button>
+    <button class="secondary" data-action="start-fresh">Sıfırdan başla</button>
   </div>`;
 }
 
@@ -1945,6 +1962,7 @@ const A = {
   'import-mm'() { $('#file-mm').click(); },
   'import-json'() { $('#file-json').click(); },
   'export-json'() { exportJSON(); },
+  'start-fresh'() { seedDefaults(); save(); ui.tab = 'home'; render(); toast('Hesaplar ve kategoriler hazır, Ayarlar\'dan düzenleyebilirsin'); },
   'wipe'() { if (!confirm('Tüm hesaplar, kategoriler ve işlemler bu cihazdan kalıcı olarak silinecek. Önce yedek almanı öneririm. Devam edilsin mi?')) return; S = emptyState(); save(); ui.tab = 'home'; render(); toast('Tüm veriler silindi'); }
 };
 document.addEventListener('click', e => {
@@ -2123,7 +2141,9 @@ $('#file-mm').addEventListener('change', async e => {
     data.txs.push(...S.txs.filter(t => keep.has(t.recurringId)));
     const loans = (S.loans || []).filter(l => ids.has(l.accountId) && ids.has(l.payFrom || l.accountId)), keepL = new Set(loans.map(l => l.id));
     data.txs.push(...S.txs.filter(t => keepL.has(t.loanId) && !keep.has(t.recurringId)));
-    data.categories.push(...S.categories.filter(c => !String(c.id).startsWith('mm-'))); // categories made in Cüzdan
+    // categories made in Cüzdan; unused starter categories ("Sıfırdan başla") are dropped
+    const usedCat = new Set([...data.txs, ...rules].map(x => x.categoryId));
+    data.categories.push(...S.categories.filter(c => !String(c.id).startsWith('mm-') && (!String(c.id).startsWith('def-') || usedCat.has(c.id) || S.categories.some(k => k.parentId === c.id && usedCat.has(k.id)))));
     // keep icons the user chose: category defaults and per-transaction overrides (ids are stable across imports)
     const oldCat = new Map(S.categories.map(c => [c.id, c.emoji])), oldTx = new Map(S.txs.filter(t => t.icon).map(t => [t.id, t.icon]));
     const oldAcc = new Map(S.accounts.filter(a => a.icon).map(a => [a.id, a.icon]));
