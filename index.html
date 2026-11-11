@@ -755,6 +755,20 @@ function ensureLinks() {
     if (named) { named.link = key; named.hidden = false; }
     else S.categories.push({id:`cz-${key}-${kind}`, name:L.name, kind, parentId:null, emoji:L.emoji, color:L.color, hidden:false, order:900, link:key});
   }
+  // the auto-made category becomes redundant once the user has their own one with the same name (e.g. created later
+  // in Money Manager): move everything onto the user's category and drop the duplicate
+  for (const [key] of Object.entries(LINKS)) for (const kind of ['income', 'expense']) {
+    const auto = S.categories.find(c => c.id === `cz-${key}-${kind}`);
+    const own = S.categories.filter(c => c.kind === kind && c.link === key && c !== auto).sort((a, b) => (!!a.parentId - !!b.parentId) || (!!a.hidden - !!b.hidden))[0];
+    if (!auto || !own) continue;
+    for (const t of S.txs) if (t.categoryId === auto.id) t.categoryId = own.id;
+    for (const r of S.rules || []) if (r.categoryId === auto.id) r.categoryId = own.id;
+    for (const c of S.categories) if (c.parentId === auto.id) c.parentId = own.id;
+    if (S.budgets?.[auto.id] != null) { if (S.budgets[own.id] == null) S.budgets[own.id] = S.budgets[auto.id]; delete S.budgets[auto.id]; }
+    for (const k of Object.keys(S.noteIcons || {})) if (k.startsWith(auto.id + '|')) { const nk = own.id + k.slice(auto.id.length); if (!S.noteIcons[nk]) S.noteIcons[nk] = S.noteIcons[k]; delete S.noteIcons[k]; }
+    if (!own.emoji && auto.emoji) own.emoji = auto.emoji;
+    S.categories = S.categories.filter(c => c !== auto);
+  }
 }
 const linkCat = (key, kind) => S.categories.find(c => c.kind === kind && c.link === key)?.id || null;
 
@@ -1001,7 +1015,7 @@ function seedDefaults() {
   S.categories = [];
   for (const kind of ['expense', 'income']) DEFAULT_CATS[kind].forEach(([name, emoji], i) =>
     S.categories.push({id:`def-${kind}-${i}`, name, kind, parentId:null, emoji, color:CAT_COLORS[i % CAT_COLORS.length], hidden:false, order:i}));
-  ensureLinks(); S.meta.linksV1 = true; S.meta.cutDayFix = true;
+  ensureLinks(); S.meta.linksV1 = S.meta.linksV2 = true; S.meta.cutDayFix = true;
 }
 
 function welcome() {
@@ -2211,6 +2225,7 @@ window.addEventListener('popstate', () => { if (sheetState) closeSheet(); goBack
     S.meta.cutDayFix = true; if (S.accounts.length) save();
   }
   if (!S.meta.linksV1 && S.categories.length) { ensureLinks(); S.meta.linksV1 = true; save(); }
+  if (!S.meta.linksV2 && S.categories.length) { ensureLinks(); S.meta.linksV2 = true; save(); } // merge duplicate Kredi/Yatırım/Borç
   ui.month = curMonth();
   const n = runRecurring(), nl = runLoans();
   render();
