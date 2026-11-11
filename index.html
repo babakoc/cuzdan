@@ -337,6 +337,12 @@ div.seg button{min-height:36px;border-radius:18px;font-weight:500;font-size:var(
 div.seg button.on{background:var(--card-elev);font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04)}
 .amount{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:10px 0 18px}
 .amount input{border:0;background:none;outline:none;font-size:2.7rem;font-weight:700;text-align:right;width:2ch;max-width:78%;padding:0}
+.amt-sign{align-self:center;width:44px;height:44px;border-radius:22px;background:var(--chip);color:var(--muted);font-size:var(--t-title3);font-weight:600;margin-right:4px}
+.amt-sign.on{background:color-mix(in srgb,var(--neg-fill) 16%,transparent);color:var(--neg)}
+.note-sugs{display:flex;gap:8px;overflow-x:auto;padding:0 16px 12px;scrollbar-width:none}
+.note-sugs:empty{display:none}
+.note-sugs::-webkit-scrollbar{display:none}
+.note-sugs .chip{gap:4px}
 .amount span{font-size:var(--t-title1);color:var(--muted);font-weight:600}
 .form{background:var(--card);border-radius:22px;overflow:hidden;margin-bottom:14px}
 .field{display:flex;align-items:center;gap:12px;padding:0 16px;min-height:52px;position:relative}
@@ -1495,6 +1501,23 @@ function emojiResults() {
   for (const [g, name] of Object.entries(EMOJI_GROUPS)) { const l = emojiLib.filter(e => e.g === +g); if (l.length) html += `<div class="sub-label">${name}</div><div class="ico-grid">${l.map(e => tile(e.u)).join('')}</div>`; }
   return html;
 }
+// past notes for this type (and category, once one is picked), filtered by what's typed
+function noteSuggestions(d) {
+  if (d.type === 'adjust') return [];
+  const q = noteKey(d.note || ''), m = new Map();
+  for (const t of S.txs) {
+    if (t.type !== d.type || (d.categoryId && t.categoryId !== d.categoryId)) continue;
+    const k = noteKey(t.note); if (!k || (q && (!k.includes(q) || k === q))) continue;
+    const o = m.get(k) || {key:k, name:'', count:0, last:'', cats:new Map()};
+    o.count++; if (t.date >= o.last) { o.last = t.date; o.name = String(t.note).replace(/\s*\(\d+\/\d+\)\s*$/, '').trim(); }
+    if (t.categoryId) o.cats.set(t.categoryId, (o.cats.get(t.categoryId) || 0) + 1);
+    m.set(k, o);
+  }
+  return [...m.values()].sort((a, b) => (q ? (b.key.startsWith(q) - a.key.startsWith(q)) : 0) || b.count - a.count || b.last.localeCompare(a.last)).slice(0, 10)
+    .map(o => ({...o, cat:[...o.cats.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || ''}));
+}
+const noteSugHTML = d => noteSuggestions(d).map(o => `<button class="chip" data-action="pick-note" data-name="${esc(o.name)}" data-cat="${o.cat}">${(() => { const ic = noteIconFor(o.cat, o.name); return ic ? ico(ic, 'inline') + ' ' : ''; })()}${esc(o.name)}</button>`).join('');
+
 function drawTxSheet() {
   if (sheetState.picking) return drawIconPicker();
   const d = sheetState, kind = d.type === 'income' ? 'income' : 'expense';
@@ -1507,7 +1530,7 @@ function drawTxSheet() {
     <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isRule ? (d.isNew ? 'Yeni tekrar' : 'Tekrarlayan') : d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
     ${isAdj ? '' : `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>`}
     ${isAdj ? '' : `<button class="tx-icon" data-action="icon-open"><span class="ic-big" style="background:${tcol}22;color:${tcol}">${ico(shown)}</span><small>${ctx.cur ? 'Özel simge' : 'Simgeyi değiştir'}</small></button>`}
-    <div class="amount"><input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
+    <div class="amount">${d.type !== 'transfer' && !d.isRule ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
     <div class="form">
       <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId">${accOptions(d.accountId)}</select></div>
       ${d.type === 'transfer' ? `<div class="field"><label>Nereye</label><select data-f="toAccountId"><option value="">Seç</option>${accOptions(d.toAccountId, a => a.id !== d.accountId)}</select></div>` : ''}
@@ -1520,7 +1543,8 @@ function drawTxSheet() {
       : `<div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>
       ${d.isNew && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="inst" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.inst === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
       ${d.isNew && !isAdj && !(+d.inst > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}`}
-      <div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı"></div>
+      <div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı" autocomplete="off"></div>
+      <div class="note-sugs" id="note-sugs">${noteSugHTML(d)}</div>
     </div>
     ${d.type === 'transfer' || isAdj ? '' : `
       <div class="sub-label">Kategori</div>
@@ -1860,6 +1884,19 @@ const A = {
   'edit-tx'(el) { txSheet(S.txs.find(t => t.id === el.dataset.id)); },
   'tx-type'(el) { sheetState.type = el.dataset.v; const c = D.cat.get(sheetState.categoryId); if (c && c.kind !== sheetState.type) { sheetState.categoryId = null; sheetState.catParent = null; } drawTxSheet(); },
   'pick-parent'(el) { sheetState.catParent = el.dataset.id; sheetState.categoryId = el.dataset.id; drawTxSheet(); },
+  'pick-note'(el) {
+    const d = sheetState; d.note = el.dataset.name;
+    if (!d.categoryId && el.dataset.cat && D.cat.get(el.dataset.cat)) { // no category yet: take the one this note is usually filed under
+      d.categoryId = el.dataset.cat; d.catParent = topCat(el.dataset.cat)?.id || el.dataset.cat; drawTxSheet(); return;
+    }
+    const i = document.querySelector('#sheet [data-f="note"]'); if (i) i.value = d.note;
+    $('#note-sugs').innerHTML = noteSugHTML(d);
+  },
+  'amt-sign'(el) {
+    const d = sheetState, v = String(d.amount || '').trim();
+    d.amount = v.startsWith('-') ? v.slice(1) : '-' + v;
+    const i = $('#f-amt'); i.value = d.amount; el.classList.toggle('on', d.amount.startsWith('-')); sizeAmt(); i.focus();
+  },
   'pick-cat'(el) { sheetState.categoryId = el.dataset.id; drawTxSheet(); },
   'save-tx'() {
     if (sheetState.isRule) return saveRule();
@@ -1977,7 +2014,8 @@ document.addEventListener('input', e => {
   if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q ? '' : monthSwitch(); renderTxList(); return; }
   if (!sheetState) return;
   if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
-  if (el.id === 'f-amt') sizeAmt();
+  if (el.id === 'f-amt') { sizeAmt(); document.querySelector('.amt-sign')?.classList.toggle('on', el.value.trim().startsWith('-')); }
+  if (el.dataset.f === 'note' && $('#note-sugs')) $('#note-sugs').innerHTML = noteSugHTML(sheetState);
   if (el.id === 'f-amt' && +sheetState.inst > 1 && !sheetState.isRule) { const n = document.querySelector('#sheet p.note'); if (n) n.textContent = 'Toplam tutarı gir. ' + instPreview(sheetState); }
   if (sheetState.isLoan && $('#loan-sum')) $('#loan-sum').innerHTML = loanSummary(sheetState);
   if (el.dataset.cf) { sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; }
