@@ -830,7 +830,7 @@ VIEWS.txs = () => {
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c || ui.noteFilter != null) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)}${c.link ? ' · gelir + gider' : ''} ✕</button>` : ''}${ui.noteFilter != null ? `<button class="chip on" data-action="clear-note">“${esc(noteName(ui.noteFilter))}” ✕</button>` : ''}</div>` : ''}
   <div id="month-wrap">${ui.q ? '' : monthSwitch()}</div>
-  ${c && !ui.q ? catCharts(c) : ''}
+  ${c && !ui.q ? catCharts(c) : a && !ui.q ? accCharts(a) : ''}
   <div id="txlist"></div>`;
 };
 /* charts for one category: its last 12 periods, and how its subcategories split the selected period */
@@ -858,6 +858,33 @@ function catSeries(c, m) {
   return {inn:Math.max(0, inn), out:Math.max(0, out)};
 }
 // summary chart: income and expense of 12 periods; its window moves only with its own arrows
+/* money moving in and out of one account. Card payments are transfers, so for an account (and above all
+   a credit card) "income/expense" is the wrong lens: what matters is what came in and what went out. */
+function flowOf(t, id) {
+  if (t.v) return [0, 0];
+  if (t.type === 'transfer') return [t.toAccountId === id ? t.amount : 0, t.accountId === id ? t.amount : 0];
+  if (t.accountId !== id) return [0, 0];
+  if (t.type === 'income') return t.amount >= 0 ? [t.amount, 0] : [0, -t.amount];
+  if (t.type === 'adjust') return t.amount >= 0 ? [t.amount, 0] : [0, -t.amount];
+  return t.amount >= 0 ? [0, t.amount] : [-t.amount, 0]; // a refund (negative expense) is money back in
+}
+function accFlow(id, list) { let inn = 0, out = 0; for (const t of list) { const [i, o] = flowOf(t, id); inn += i; out += o; } return {inn, out}; }
+const flowWords = a => a?.type === 'card' ? {in:'Ödeme', out:'Harcama'} : {in:'Giren', out:'Çıkan'};
+function accCharts(a) {
+  const W = flowWords(a), yy = m => `${monthShort(m)} ${m.slice(2, 4)}`;
+  if (!ui.chartEnd) ui.chartEnd = ui.month;
+  if (ui.month > ui.chartEnd) ui.chartEnd = ui.month; else if (ui.month < shiftMonth(ui.chartEnd, -11)) ui.chartEnd = shiftMonth(ui.month, 11);
+  const end = ui.chartEnd, start = shiftMonth(end, -11);
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, D.byMonth.get(m) || [])}));
+  const maxV = Math.max(1, ...ser.map(x => Math.max(x.inn, x.out)));
+  const act = ser.filter(x => x.inn > 0.004 || x.out > 0.004), n = act.length || 1;
+  const ai = act.reduce((s, x) => s + x.inn, 0) / n, ao = act.reduce((s, x) => s + x.out, 0) / n;
+  return `<section class="card"><h3>${esc(a.name)} · 12 dönem</h3>
+    <div class="chart-nav"><button data-action="chart-shift" data-d="-3" aria-label="3 dönem geri">${ICON.chevL}</button><span>${yy(start)} – ${yy(end)}</span><button data-action="chart-shift" data-d="3" aria-label="3 dönem ileri" ${end >= chartMax() ? 'disabled' : ''}>${ICON.chevR}</button></div>
+    <div class="cat-meta"><span>Ort. ${W.out.toLocaleLowerCase('tr')}<small>${act.length} dönem</small><b class="num neg">${money(ao, false)}</b></span><span>Ort. ${W.in.toLocaleLowerCase('tr')}<small>${act.length} dönem</small><b class="num pos">${money(ai, false)}</b></span><span>Ort. net<small>dönem başına</small><b class="num ${ai - ao >= 0 ? 'pos' : 'neg'}">${ai - ao >= 0 ? '+' : '−'}${money(Math.abs(ai - ao), false)}</b></span></div>
+    <div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inn / maxV * 100}%"></i><i class="e" style="height:${x.out / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
+    <div class="bar-legend"><span><i style="background:var(--pos)"></i>${W.in}</span><span><i style="background:var(--neg)"></i>${W.out}</span></div></section>`;
+}
 function homeChart() {
   if (!ui.homeEnd) ui.homeEnd = ui.month;
   if (ui.month > ui.homeEnd) ui.homeEnd = ui.month; else if (ui.month < shiftMonth(ui.homeEnd, -11)) ui.homeEnd = shiftMonth(ui.month, 11);
@@ -946,7 +973,10 @@ function renderTxList() {
   if (lk) {
     let inn = 0, out = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
     sum = `<div class="link-sum"><span>Gelen<b class="num pos">+${money(inn, false)}</b></span><span>Giden<b class="num neg">−${money(out, false)}</b></span><span>Net<b class="num ${inn - out >= 0 ? 'pos' : 'neg'}">${inn - out >= 0 ? '+' : '−'}${money(Math.abs(inn - out), false)}</b></span></div>`;
-  } else if (!ui.catFilter) { // income / expense / difference of what the list shows (whole period, an account, or a search)
+  } else if (ui.accFilter && !ui.catFilter) {
+    const W = flowWords(D.acc.get(ui.accFilter)), f = accFlow(ui.accFilter, list), net = f.inn - f.out;
+    sum = `<div class="link-sum"><span>${W.out}<b class="num neg">${money(f.out, false)}</b></span><span>${W.in}<b class="num pos">${money(f.inn, false)}</b></span><span>Net<b class="num ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${money(Math.abs(net), false)}</b></span></div>`;
+  } else if (!ui.catFilter) { // income / expense / difference of what the list shows (whole period, or a search)
     let inc = 0, exp = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
     sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
