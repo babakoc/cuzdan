@@ -922,6 +922,8 @@ VIEWS.accounts = () => {
         : f ? `Gelecek taksitler ${money(Math.abs(f), false)}` : 'Kredi kartı';
     }
     if (a.type === 'bank') sub = 'Banka hesabı';
+    const bank = a.type === 'card' && a.parentId ? S.accounts.find(x => x.id === a.parentId && !x.deleted) : null;
+    if (bank) sub = `${bank.name} · ${sub}`;
     const meter = a.type === 'card' && a.limit ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -v / a.limit * 100))}%"></i></div>` : '';
     return `<button class="row ${nested ? 'nested' : ''}" data-action="open-acc" data-id="${a.id}">
       <div class="ic" style="background:${color}22;color:${color}">${ico(a.icon || ACC_ICON[a.type] || '👛')}</div>
@@ -933,17 +935,15 @@ VIEWS.accounts = () => {
     const sum = list.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0);
     return `<div class="sec-title">${title}<small class="num">${money(sum, false)}</small></div><div class="list">${list.map(x => Array.isArray(x) ? x.map((a, i) => accRow(a, i > 0)).join('') : accRow(x)).join('')}</div>`;
   };
-  const cards = visible.filter(a => a.type === 'card');
-  const bankIds = new Set(visible.filter(a => a.type === 'bank').map(a => a.id));
-  // banks with their linked cards nested under them
-  const banks = visible.filter(a => a.type === 'bank').sort(byOrder).map(b => [b, ...cards.filter(c => c.parentId === b.id).sort(byOrder)]);
-  const sumOf = arr => arr.flat();
   let html = `<header class="big"><h1>Hesaplar</h1><button class="icon-btn" data-action="add-acc" aria-label="Hesap ekle">${ICON.plus}</button></header>`;
   if (!S.accounts.length) return html + '<div class="empty"><div class="big">🏦</div>Henüz hesap yok</div>';
   html += `<section class="hero" style="padding:18px 20px"><div class="label">Net varlık</div><div class="big-amt num" style="margin-bottom:0">${money(D.assets + D.debts)}</div></section>`;
-  html += banks.length ? (() => { const flat = sumOf(banks); const sum = flat.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0); return `<div class="sec-title">Banka hesapları ve kartlar<small class="num">${money(sum, false)}</small></div><div class="list">${banks.map(g => g.map((a, i) => accRow(a, i > 0)).join('')).join('')}</div>`; })() : '';
-  html += section('Kredi kartları', cards.filter(c => !bankIds.has(c.parentId)).sort(byOrder));
-  for (const t of ['cash', 'ewallet', 'savings', 'invest', 'insurance', 'other']) html += section(ACC_TYPES[t], visible.filter(a => a.type === t).sort(byOrder));
+  // order: cash first, then bank accounts, then credit cards, then the rest
+  const ofType = t => visible.filter(a => a.type === t).sort(byOrder);
+  html += section(ACC_TYPES.cash, ofType('cash'));
+  html += section('Banka hesapları', ofType('bank'));
+  html += section('Kredi kartları', ofType('card'));
+  for (const t of ['ewallet', 'savings', 'invest', 'insurance', 'other']) html += section(ACC_TYPES[t], visible.filter(a => a.type === t).sort(byOrder));
   { // loans: the schedule-based ones plus any balance-based loan accounts
     const accs = visible.filter(a => a.type === 'loan').sort(byOrder), loans = S.loans || [];
     const sum = -D.loanDebt + accs.reduce((s, a) => s + (D.bal.get(a.id) || 0), 0);
