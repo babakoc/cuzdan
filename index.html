@@ -25,7 +25,8 @@
   --accent:#7C87FF; --pos:#3DD68C; --neg:#FF6B6E; --chip:#23232B; --bar:rgba(20,20,24,.72); --shadow:none;}
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;background:var(--bg);color:var(--text)}
+html,body{margin:0;background:var(--bg);color:var(--text);touch-action:manipulation}
+button,a,input,select{touch-action:manipulation}
 body{font:16px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;
   padding-top:env(safe-area-inset-top);min-height:100vh;overscroll-behavior-y:none}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
@@ -51,7 +52,22 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .month{display:flex;align-items:center;justify-content:center;gap:6px;margin:20px 0 12px}
 .month button{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--accent)}
 .month button:disabled{opacity:.3}
-.month span{min-width:150px;text-align:center;font-weight:650;font-size:17px}
+.month span,.month .mlabel{min-width:150px;text-align:center;font-weight:650;font-size:17px;width:auto;height:auto;border-radius:10px;display:block;color:var(--text);padding:2px 6px}
+.month .mlabel .caret{font-style:normal;font-size:11px;color:var(--muted);margin-left:5px;vertical-align:2px}
+.month .mlabel small{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:1px}
+.to-today{display:flex;justify-content:center;margin:-6px 0 10px}
+.to-today button{font-size:13px;font-weight:650;color:var(--accent);background:var(--chip);padding:6px 12px;border-radius:999px}
+.mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 16px}
+.mgrid button{height:52px;border-radius:14px;background:var(--card);font-weight:650;font-size:15px;position:relative;text-transform:capitalize}
+.mgrid button.now{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.mgrid button.on{background:var(--accent);color:#fff}
+.mgrid button i{position:absolute;bottom:7px;left:50%;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--muted)}
+.mgrid button.on i{background:#fff}
+.chart-nav{display:flex;align-items:center;justify-content:space-between;margin:-4px 0 10px;background:var(--chip);border-radius:12px;padding:3px}
+.chart-nav button{width:36px;height:30px;border-radius:9px;display:grid;place-items:center;color:var(--accent)}
+.chart-nav button:disabled{opacity:.3}
+.chart-nav span{font-size:13px;font-weight:650;color:var(--muted)}
+.cat-meta small{display:block;font-size:10px;font-weight:600;opacity:.8}
 .month span small{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:1px}
 
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -637,13 +653,14 @@ const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, noteFi
    back button (and the edge swipe, through the browser history) returns there at the same scroll position */
 const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar'};
 function drillTo(apply) {
-  ui.stack.push({tab:ui.tab, accFilter:ui.accFilter, catFilter:ui.catFilter, noteFilter:ui.noteFilter, q:ui.q, y:window.scrollY});
+  ui.stack.push({tab:ui.tab, accFilter:ui.accFilter, catFilter:ui.catFilter, noteFilter:ui.noteFilter, q:ui.q, y:window.scrollY, chartEnd:ui.chartEnd});
+  ui.chartEnd = null;
   try { history.pushState({cz:ui.stack.length}, ''); } catch {}
   apply(); render(); window.scrollTo(0, 0);
 }
 function goBack() {
   const f = ui.stack.pop(); if (!f) return;
-  Object.assign(ui, {tab:f.tab, accFilter:f.accFilter, catFilter:f.catFilter, noteFilter:f.noteFilter ?? null, q:f.q});
+  Object.assign(ui, {tab:f.tab, accFilter:f.accFilter, catFilter:f.catFilter, noteFilter:f.noteFilter ?? null, q:f.q, chartEnd:f.chartEnd || null});
   render(); window.scrollTo(0, f.y); setTimeout(() => window.scrollTo(0, f.y), 30); // again once images/fonts settle
 }
 const backBtn = () => { const f = ui.stack[ui.stack.length - 1]; if (!f) return '';
@@ -664,7 +681,7 @@ const ICON = {
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   rowChev:'<svg class="chev" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m1 1 6 6-6 6"/></svg>'
 };
-const monthSwitch = () => { const [a, b] = periodRange(ui.month); return `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki dönem">${ICON.chevL}</button><span>${monthLabel(ui.month)}${periodDay() > 1 ? `<small>${shortDate(a)} – ${shortDate(b)}</small>` : ''}</span><button data-action="month" data-d="1" aria-label="Sonraki dönem">${ICON.chevR}</button></div>`; };
+const monthSwitch = () => { const [a, b] = periodRange(ui.month); return `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki dönem">${ICON.chevL}</button><button class="mlabel" data-action="period-pick">${monthLabel(ui.month)}<i class="caret">▾</i>${periodDay() > 1 ? `<small>${shortDate(a)} – ${shortDate(b)}</small>` : ''}</button><button data-action="month" data-d="1" aria-label="Sonraki dönem">${ICON.chevR}</button></div>${ui.month !== curMonth() ? `<div class="to-today"><button data-action="to-today">Bugüne dön · ${monthLabel(curMonth())}</button></div>` : ''}`; };
 
 function txRow(t, ctxAcc, withDate) {
   let icon, color, title, sub, amt, cls = '';
@@ -851,16 +868,24 @@ function catSeries(c, m) {
   }
   return {inn:Math.max(0, inn), out:Math.max(0, out)};
 }
+const chartMax = () => { const k = [...D.byMonth.keys()].sort().pop() || curMonth(); return k > curMonth() ? k : curMonth(); };
 function catCharts(c) {
   const showIn = !!c.link || c.kind === 'income', showOut = !!c.link || c.kind === 'expense';
-  const ser = Array.from({length:12}, (_, i) => shiftMonth(ui.month, i - 11)).map(m => ({m, ...catSeries(c, m)}));
+  // the window only moves with its arrows (3 periods at a time) or when the selected period falls outside it
+  if (!ui.chartEnd) ui.chartEnd = ui.month;
+  if (ui.month > ui.chartEnd) ui.chartEnd = ui.month; else if (ui.month < shiftMonth(ui.chartEnd, -11)) ui.chartEnd = shiftMonth(ui.month, 11);
+  const end = ui.chartEnd, start = shiftMonth(end, -11);
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...catSeries(c, m)}));
   const maxV = Math.max(1, ...ser.map(x => Math.max(showIn ? x.inn : 0, showOut ? x.out : 0)));
   const main = x => c.kind === 'income' && !c.link ? x.inn : c.link ? x.inn - x.out : x.out;
-  const cur = ser[ser.length - 1], avg = ser.reduce((s, x) => s + main(x), 0) / ser.length;
+  const cur = ser.find(x => x.m === ui.month) || {inn:0, out:0}, active = ser.filter(x => x.inn > 0.004 || x.out > 0.004);
+  const avg = active.length ? active.reduce((s, x) => s + main(x), 0) / active.length : 0; // periods with nothing don't pull the average down
+  const yy = m => `${monthShort(m)} ${m.slice(2, 4)}`;
   const sign = v => c.link ? (v >= 0 ? '+' : '−') + money(Math.abs(v), false) : money(v, false);
   const note = ui.noteFilter != null ? noteName(ui.noteFilter) : null;
   let html = `<section class="card"><h3>${esc(c.name)}${note != null ? ` › ${esc(note)}` : c.link ? ' · gelir + gider' : ''}</h3>
-    <div class="cat-meta"><span>Bu dönem<b class="num">${sign(main(cur))}</b></span><span>12 dönem ortalaması<b class="num">${sign(avg)}</b></span><span>12 dönem toplamı<b class="num">${sign(ser.reduce((s, x) => s + main(x), 0))}</b></span></div>
+    <div class="chart-nav"><button data-action="chart-shift" data-d="-3" aria-label="3 dönem geri">${ICON.chevL}</button><span>${yy(start)} – ${yy(end)}</span><button data-action="chart-shift" data-d="3" aria-label="3 dönem ileri" ${end >= chartMax() ? 'disabled' : ''}>${ICON.chevR}</button></div>
+    <div class="cat-meta"><span>${monthLabel(ui.month)}<b class="num">${sign(main(cur))}</b></span><span>Ortalama<small>${active.length} dönem</small><b class="num">${sign(avg)}</b></span><span>Toplam<small>gösterilen 12 dönem</small><b class="num">${sign(ser.reduce((s, x) => s + main(x), 0))}</b></span></div>
     <div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col">${showIn ? `<i class="g" style="height:${x.inn / maxV * 100}%"></i>` : ''}${showOut ? `<i class="e" style="height:${x.out / maxV * 100}%"></i>` : ''}</div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
     ${c.link ? '<div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div>' : ''}</section>`;
   // subcategory split for the selected period
@@ -1249,6 +1274,17 @@ function drawNoteSheet() {
     <p class="note">${d.count} işlem · toplam ${money(d.total)}. Burada yaptığın değişiklik bu kategorideki "${esc(d.name)}" notlu tüm işlemlere (ve aynı notlu tekrarlayan işlemlere) uygulanır. Simge, sonradan bu notla eklediğin işlemlerde de kullanılır; tek tek simge verdiğin işlemler kendi simgesini korur. Başka bir notun adını yazarsan iki not birleşir.</p>
     <button class="secondary" data-action="note-show">Bu notun işlemlerini göster</button>`);
 }
+/* period picker: a year with its 12 months, dots on months that have transactions */
+function drawPeriodPicker() {
+  const y = sheetState.year, cur = curMonth(), names = Array.from({length:12}, (_, i) => parseD(`2026-${pad(i + 1)}-01`).toLocaleDateString('tr-TR', {month:'short'}));
+  const keys = [...D.byMonth.keys()].sort(), minY = +(keys[0] || cur).slice(0, 4), maxY = Math.max(+cur.slice(0, 4) + 1, +(keys[keys.length - 1] || cur).slice(0, 4));
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Kapat</button><h2>Dönem seç</h2><span style="width:44px"></span></div>
+    <div class="month" style="margin-top:4px"><button data-action="pick-year" data-d="-1" ${y <= minY ? 'disabled' : ''} aria-label="Önceki yıl">${ICON.chevL}</button><span>${y}</span><button data-action="pick-year" data-d="1" ${y >= maxY ? 'disabled' : ''} aria-label="Sonraki yıl">${ICON.chevR}</button></div>
+    <div class="mgrid">${names.map((n, i) => { const k = `${y}-${pad(i + 1)}`;
+      return `<button class="${k === ui.month ? 'on' : ''} ${k === cur ? 'now' : ''}" data-action="pick-month" data-m="${k}">${n}${D.byMonth.has(k) ? '<i></i>' : ''}</button>`; }).join('')}</div>
+    <button class="secondary" data-action="pick-month" data-m="${cur}">Bugün · ${monthLabel(cur)}</button>`);
+}
 function catsSheet() {
   sheetState = {mode:'list', kind:'expense'};
   drawCatsSheet();
@@ -1335,7 +1371,14 @@ const A = {
   },
   tab(el, e) { e?.preventDefault(); if (el.closest('nav.tabs')) ui.stack = []; if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; ui.noteFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
   month(el) { ui.month = shiftMonth(ui.month, +el.dataset.d); render(); },
-  'goto-month'(el) { ui.month = el.dataset.m; render(); },
+  'to-today'() { ui.month = curMonth(); render(); },
+  'period-pick'() { sheetState = {isPicker:true, year:+ui.month.slice(0, 4)}; drawPeriodPicker(); },
+  'pick-year'(el) { sheetState.year += +el.dataset.d; drawPeriodPicker(); },
+  'pick-month'(el) { ui.month = el.dataset.m; closeSheet(); const y = window.scrollY; render(); window.scrollTo(0, y); },
+  'goto-month'(el) { ui.month = el.dataset.m; const y = window.scrollY; render(); window.scrollTo(0, y); },
+  'chart-shift'(el) { const max = chartMax(); let e = shiftMonth(ui.chartEnd || ui.month, +el.dataset.d); if (e > max) e = max;
+    ui.chartEnd = e; const s0 = shiftMonth(e, -11); if (ui.month > e) ui.month = e; else if (ui.month < s0) ui.month = s0; // keep the selection inside the window
+    const y = window.scrollY; render(); window.scrollTo(0, y); },
   'cat-drill'(el) { drillTo(() => { ui.catFilter = el.dataset.id; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'note-drill'(el) { drillTo(() => { ui.noteFilter = el.dataset.note; ui.q = ''; }); },
   'donut-more'(el) { const k = el.dataset.k; ui.donutOpen.has(k) ? ui.donutOpen.delete(k) : ui.donutOpen.add(k); const y = window.scrollY; render(); window.scrollTo(0, y); },
