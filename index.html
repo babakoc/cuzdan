@@ -988,6 +988,7 @@ VIEWS.flow = () => {
     <div class="tile"><span>6 dönem ort.</span><b class="num">${atot ? money(atot, false) : '—'}</b>${changeTag(tot, atot, inc)}</div>
   </div>
   ${donutCard('Dağılım', st[key], inc ? 'Bu dönem gelir yok' : 'Bu dönem gider yok')}
+  ${homeChart(ui.flowKind)}
   ${rows.length ? `<div class="sec-title">Kategoriler<small>${rows.length} kategori</small></div><div class="list">${rows.map(([id, v], i) => row(id, v, i)).join('')}</div>` : ''}
   ${gone.length ? `<div class="sec-title">Bu dönem hiç olmayanlar</div><div class="list">${gone.map(([id, pv]) => { const c = D.cat.get(id);
     return `<button class="row" ${c ? `data-action="cat-drill" data-id="${id}"` : ''}><div class="ic" style="background:${(c?.color || '#64748B')}22">${ico(c?.emoji || '•')}</div><div class="t"><b>${esc(c?.name || 'Kategorisiz')}</b><small class="num">önceki ${money(pv, false)}</small></div><div class="a num">${money(0, false)}</div>${ICON.rowChev}</button>`; }).join('')}</div>` : ''}
@@ -1164,18 +1165,29 @@ function accCharts(a) {
     <div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inn / maxV * 100}%"></i><i class="e" style="height:${x.out / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
     <div class="bar-legend"><span><i style="background:var(--pos)"></i>${W.in}</span><span><i style="background:var(--neg)"></i>${W.out}</span></div></section>`;
 }
-function homeChart() {
+// kind: undefined → income and expense side by side (Özet, Gelir ve gider); 'inc' / 'exp' → that one only (dağılım detail pages)
+function homeChart(kind) {
   if (!ui.homeEnd) ui.homeEnd = ui.month;
   if (ui.month > ui.homeEnd) ui.homeEnd = ui.month; else if (ui.month < shiftMonth(ui.homeEnd, -11)) ui.homeEnd = shiftMonth(ui.month, 11);
   const end = ui.homeEnd, start = shiftMonth(end, -11), yy = m => `${monthShort(m)} ${m.slice(2, 4)}`;
   const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...monthStats(m)}));
-  const maxV = Math.max(1, ...ser.map(x => Math.max(x.inc, x.exp)));
+  const showI = kind !== 'exp', showE = kind !== 'inc';
+  const maxV = Math.max(1, ...ser.map(x => Math.max(showI ? x.inc : 0, showE ? x.exp : 0)));
+  const nav = `<div class="chart-nav"><button data-action="chart-shift" data-k="home" data-d="-3" aria-label="3 dönem geri">${ICON.chevL}</button><span>${yy(start)} – ${yy(end)}</span><button data-action="chart-shift" data-k="home" data-d="3" aria-label="3 dönem ileri" ${end >= chartMax() ? 'disabled' : ''}>${ICON.chevR}</button></div>`;
+  const bars = `<div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}" aria-label="${monthLabel(x.m)}${showI ? `, gelir ${money(x.inc, false)}` : ''}${showE ? `, gider ${money(x.exp, false)}` : ''}"><div class="col">${showI ? `<i class="g" style="height:${x.inc / maxV * 100}%"></i>` : ''}${showE ? `<i class="e" style="height:${x.exp / maxV * 100}%"></i>` : ''}</div><span>${monthShort(x.m)}</span></button>`).join('')}</div>`;
+  if (kind) {
+    const f = kind === 'inc' ? x => x.inc : x => x.exp, cls = kind === 'inc' ? 'pos' : 'neg';
+    const act = ser.filter(x => f(x) > 0.004), avg = act.length ? act.reduce((s, x) => s + f(x), 0) / act.length : 0;
+    const cur = ser.find(x => x.m === ui.month);
+    return `<section class="card"><h3>${kind === 'inc' ? 'Gelir' : 'Gider'} · 12 dönem</h3>${nav}
+    <div class="cat-meta"><span>${monthLabel(ui.month)}<b class="num ${cls}">${money(cur ? f(cur) : 0, false)}</b></span><span>Ortalama<small>${act.length} dönem</small><b class="num">${money(avg, false)}</b></span><span>Toplam<small>gösterilen 12 dönem</small><b class="num">${money(ser.reduce((s, x) => s + f(x), 0), false)}</b></span></div>
+    ${bars}<div class="bar-legend"><span style="margin-left:auto">Çubuğa dokun, o döneme geç</span></div></section>`;
+  }
   const act = ser.filter(x => x.inc > 0.004 || x.exp > 0.004), n = act.length || 1;
   const ai = act.reduce((s, x) => s + x.inc, 0) / n, ae = act.reduce((s, x) => s + x.exp, 0) / n, d = ai - ae;
-  return `<section class="card"><h3>Gelir ve gider</h3>
-    <div class="chart-nav"><button data-action="chart-shift" data-k="home" data-d="-3" aria-label="3 dönem geri">${ICON.chevL}</button><span>${yy(start)} – ${yy(end)}</span><button data-action="chart-shift" data-k="home" data-d="3" aria-label="3 dönem ileri" ${end >= chartMax() ? 'disabled' : ''}>${ICON.chevR}</button></div>
+  return `<section class="card"><h3>Gelir ve gider</h3>${nav}
     <div class="cat-meta"><span>Ort. gelir<small>${act.length} dönem</small><b class="num pos">${money(ai, false)}</b></span><span>Ort. gider<small>${act.length} dönem</small><b class="num neg">${money(ae, false)}</b></span><span>Ort. fark<small>dönem başına</small><b class="num ${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d), false)}</b></span></div>
-    <div class="bars b12">${ser.map(x => `<button class="b ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="col"><i class="g" style="height:${x.inc / maxV * 100}%"></i><i class="e" style="height:${x.exp / maxV * 100}%"></i></div><span>${monthShort(x.m)}</span></button>`).join('')}</div>
+    ${bars}
     <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span><span style="margin-left:auto">Çubuğa dokun, o döneme geç</span></div></section>`;
 }
 const chartMax = () => { const k = [...D.byMonth.keys()].sort().pop() || curMonth(); return k > curMonth() ? k : curMonth(); };
