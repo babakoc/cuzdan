@@ -82,7 +82,13 @@ button,a,input,select{touch-action:manipulation}
 body{font-family:-apple-system,BlinkMacSystemFont,system-ui,"Segoe UI",Roboto,sans-serif;font-size:var(--t-body);line-height:1.3;-webkit-font-smoothing:antialiased;
   padding-top:env(safe-area-inset-top);min-height:100vh;overscroll-behavior-y:none}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
-button:active{opacity:.6}
+button{transition:opacity .12s ease-out,transform .12s ease-out,background-color .2s ease-out,color .2s ease-out}
+button:active{opacity:.6;transition-duration:0s}
+/* keyboard focus (iPad/Mac keyboard, Full Keyboard Access): visible ring on every control */
+:focus-visible{outline:2px solid var(--accent-fill);outline-offset:2px}
+#sheet:focus-visible{outline:none}
+.field:has(input:not([type=checkbox]):focus,select:focus),.search:focus-within,.custom-emoji input:focus{box-shadow:inset 0 0 0 2px var(--accent-fill)}
+.field input:focus-visible,.field select:focus-visible,.search input:focus-visible,.custom-emoji input:focus-visible,.amount input:focus-visible{outline:none}
 input,select,textarea{font:inherit;color:inherit;font-size:max(16px,1rem)}
 .num{font-variant-numeric:tabular-nums}
 #view{padding:4px 16px calc(112px + env(safe-area-inset-bottom));max-width:680px;margin:0 auto}
@@ -152,7 +158,8 @@ header.big>div>.eyebrow:first-child{margin-top:10px}
 
 /* backup reminder */
 .backup-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;background:var(--card);border-radius:22px;padding:14px 16px;margin-bottom:14px}
-.backup-banner .bb-ic{font-size:1.6rem}
+.backup-banner .bb-ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;color:var(--accent);background:color-mix(in srgb,var(--accent-fill) 16%,transparent)}
+.backup-banner .bb-ic svg{width:22px;height:22px}
 .backup-banner .bb-t{flex:1;min-width:0}
 .backup-banner .bb-t b{display:block;font-size:var(--t-body);font-weight:600}
 .backup-banner .bb-t small{display:block;color:var(--muted);font-size:var(--t-foot);margin-top:2px}
@@ -304,8 +311,14 @@ button.row:active,.row[role=button]:active{background:var(--chip);opacity:1}
 .chip{flex:0 0 auto;min-height:34px;padding:0 14px;border-radius:17px;background:var(--chip);font-size:var(--t-sub);font-weight:500;white-space:nowrap;position:relative;display:inline-flex;align-items:center}
 .chip.on{background:var(--accent-fill);color:#fff}
 .empty{text-align:center;color:var(--muted);padding:40px 20px}
-.empty .big{font-size:2.5rem;margin-bottom:8px}
+.empty .big{width:64px;height:64px;border-radius:50%;display:grid;place-items:center;margin:0 auto 12px;background:var(--chip);color:var(--muted)}
+.empty .big svg{width:30px;height:30px}
 .welcome{text-align:center;padding:40px 18px}
+.welcome-ic{width:88px;height:88px;border-radius:26px;margin:0 auto;display:grid;place-items:center;color:#fff;
+  background:radial-gradient(120% 140% at 100% 0%,var(--hero2) 0%,transparent 58%),radial-gradient(120% 120% at 0% 100%,var(--hero3) 0%,transparent 55%),var(--hero1)}
+.welcome-ic svg{width:44px;height:44px}
+/* no data yet: tabs and the add button lead nowhere, so the welcome screen stands alone */
+body.no-data nav.tabs,body.no-data .fab,body.no-data .edge-bottom{display:none}
 .welcome h2{font-size:var(--t-title1);font-weight:700;margin:16px 0 8px}
 .welcome p{color:var(--muted);margin:0 0 22px}
 
@@ -424,9 +437,9 @@ html.ax .sheet-head h2{white-space:normal}
 <button class="fab" data-action="add-tx" aria-label="İşlem ekle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
 <div class="edge-top" aria-hidden="true"></div><div class="edge-bottom" aria-hidden="true"></div>
 
-<div id="scrim" data-action="close-sheet"></div>
-<div id="sheet"></div>
-<div id="toast"></div>
+<div id="scrim" data-action="close-sheet" aria-hidden="true"></div>
+<div id="sheet" role="dialog" aria-modal="true" tabindex="-1"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 <div class="loading" id="loading">İçe aktarılıyor…</div>
 <input type="file" id="file-mm" accept=".mmbak,.sqlite,.db,application/octet-stream" hidden>
 <input type="file" id="file-json" accept=".json,application/json" hidden>
@@ -850,14 +863,25 @@ const backBtn = () => { const f = ui.stack[ui.stack.length - 1]; if (!f) return 
   return `<button class="back" data-action="nav-back">${ICON.chevL}${esc(label)}</button>`; };
 function render() {
   derive();
-  document.querySelectorAll('nav.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
+  document.querySelectorAll('nav.tabs [data-tab]').forEach(b => {
+    const on = b.dataset.tab === ui.tab; b.classList.toggle('on', on);
+    on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current');
+  });
+  document.body.classList.toggle('no-data', !S.accounts.length);
   $('#view').innerHTML = (VIEWS[ui.tab] || VIEWS.home)();
   if (ui.tab === 'txs') renderTxList();
   if (ui.tab === 'settings') fillStorageInfo();
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2400); }
 
+const SV = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
+  wallet:SV('<path d="M19 7V5.5A1.5 1.5 0 0 0 17.5 4H5a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v3M3 6v12a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 12v4h-4a2 2 0 0 1 0-4z"/>'),
+  bank:SV('<path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/>'),
+  receipt:SV('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3"/>'),
+  target:SV('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>'),
+  repeat:SV('<path d="m17 2 4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/>'),
+  cloud:SV('<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.5a4.25 4.25 0 0 1-.5 8.5z"/><path d="M12 15v-4m0 0-2 2m2-2 2 2"/>'),
   chevL:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>',
   chevR:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
@@ -1042,7 +1066,7 @@ function seedDefaults() {
 
 function welcome() {
   return `<div class="welcome">
-    <div style="font-size:64px">👛</div>
+    <div class="welcome-ic">${ICON.wallet}</div>
     <h2>Cüzdan'a hoş geldin</h2>
     <p>Money Manager yedeğini (.mmbak) içe aktararak tüm hesaplarını, kategorilerini ve işlemlerini taşıyabilirsin.</p>
     <button class="primary" data-action="import-mm">Money Manager yedeğini seç</button>
@@ -1079,7 +1103,7 @@ VIEWS.accounts = () => {
     return `<div class="sec-title">${title}<small class="num">${money(sum, false)}</small></div><div class="list">${list.map(x => Array.isArray(x) ? x.map((a, i) => accRow(a, i > 0)).join('') : accRow(x)).join('')}</div>`;
   };
   let html = `<header class="big"><h1>Hesaplar</h1><button class="icon-btn" data-action="add-acc" aria-label="Hesap ekle">${ICON.plus}</button></header>`;
-  if (!S.accounts.length) return html + '<div class="empty"><div class="big">🏦</div>Henüz hesap yok</div>';
+  if (!S.accounts.length) return html + `<div class="empty"><div class="big">${ICON.bank}</div>Henüz hesap yok</div>`;
   html += `<section class="hero" style="padding:18px 20px"><div class="label">Net varlık</div><div class="big-amt num" style="margin-bottom:0">${money(D.assets + D.debts)}</div></section>`;
   // order: cash first, then bank accounts, then credit cards, then the rest
   const ofType = t => visible.filter(a => a.type === t).sort(byOrder);
@@ -1272,7 +1296,7 @@ function renderTxList() {
     sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
   const total = list.length; list = list.slice(0, 400);
-  if (!list.length) { $('#txlist').innerHTML = sum + '<div class="empty"><div class="big">🧾</div>İşlem bulunamadı</div>'; return; }
+  if (!list.length) { $('#txlist').innerHTML = sum + `<div class="empty"><div class="big">${ICON.receipt}</div>İşlem bulunamadı</div>`; return; }
   let html = sum, day = null, buf = [];
   const flush = () => {
     if (!buf.length) return;
@@ -1338,7 +1362,7 @@ const catLabel = c => c.parentId && D.cat.get(c.parentId) ? `${D.cat.get(c.paren
 VIEWS.budget = () => {
   const m = ui.month, prog = periodProgress(m), T = budgetTotals(m);
   let html = `<header class="big"><div>${backBtn()}<h1>Bütçe</h1></div><button class="icon-btn" data-action="add-budget" aria-label="Bütçe ekle">${ICON.plus}</button></header>${monthSwitch()}`;
-  if (!T.rows.length) return html + `<div class="empty"><div class="big">🎯</div><p>Kategorilerine aylık bütçe koy; ne kadar harcadığını, ne kadar kaldığını ve bu hızla dönem sonunda nereye varacağını gör.</p><button class="primary" data-action="add-budget">İlk bütçeyi ekle</button></div>` + unbudgeted(m);
+  if (!T.rows.length) return html + `<div class="empty"><div class="big">${ICON.target}</div><p>Kategorilerine aylık bütçe koy; ne kadar harcadığını, ne kadar kaldığını ve bu hızla dönem sonunda nereye varacağını gör.</p><button class="primary" data-action="add-budget">İlk bütçeyi ekle</button></div>` + unbudgeted(m);
   const left = T.b - T.s, proj = T.proj;
   html += `<section class="hero" style="padding:18px 20px"><div class="label">${prog >= 1 ? 'Dönem sonu' : prog <= 0 ? 'Henüz başlamadı' : `Dönemin %${Math.round(prog * 100)}'i geçti`}</div>
     <div class="big-amt num" style="margin-bottom:6px">${money(T.s, false)} <small>/ ${money(T.b, false)}</small></div>
@@ -1401,7 +1425,7 @@ VIEWS.recurring = () => {
       ${pending ? `<div class="row-actions"><button data-action="rule-skip" data-id="${r.id}">Bu sefer atla</button><button class="on" data-action="rule-post" data-id="${r.id}">Ekle</button></div>` : ''}`;
   };
   let html = `<header class="big"><div><button class="back" data-action="back">${ICON.chevL}Geri</button><h1>Tekrarlayanlar</h1></div><button class="icon-btn" data-action="add-rule" aria-label="Tekrarlayan işlem ekle">${ICON.plus}</button></header>`;
-  if (!rules.length) return html + `<div class="empty"><div class="big">🔁</div><p>Kira, maaş, abonelik, fatura, kredi taksiti gibi düzenli işlemlerini bir kez tanımla. Zamanı gelince kendiliğinden eklensin ya da senin onayını beklesin.</p><button class="primary" data-action="add-rule">İlk tekrarlayan işlemi ekle</button></div>`;
+  if (!rules.length) return html + `<div class="empty"><div class="big">${ICON.repeat}</div><p>Kira, maaş, abonelik, fatura, kredi taksiti gibi düzenli işlemlerini bir kez tanımla. Zamanı gelince kendiliğinden eklensin ya da senin onayını beklesin.</p><button class="primary" data-action="add-rule">İlk tekrarlayan işlemi ekle</button></div>`;
   html += `<div class="tiles">
     <div class="tile"><span>Sabit gider /ay</span><b class="num neg">${money(fixedExp, false)}</b></div>
     <div class="tile"><span>Sabit gelir /ay</span><b class="num pos">${money(fixedInc, false)}</b></div>
@@ -1471,11 +1495,38 @@ function glassHead(root) {
     else { r.classList.add('gbtn', 'text'); r.removeAttribute('style'); }
   }
 }
-function openSheet(html) { $('#sheet').innerHTML = '<div class="grab"></div>' + html; glassHead($('#sheet')); document.body.classList.add('sheet-open'); $('#sheet').scrollTop = 0; }
+// Sheet is a modal dialog: background goes inert, focus moves in, Escape closes, focus returns to the opener
+let sheetOpener = null;
+const SHEET_BG = () => [$('#view'), $('nav.tabs'), $('.fab')];
+function openSheet(html) {
+  const sh = $('#sheet'), wasOpen = document.body.classList.contains('sheet-open');
+  if (!wasOpen) sheetOpener = document.activeElement;
+  sh.innerHTML = '<div class="grab" aria-hidden="true"></div>' + html; glassHead(sh);
+  const h = sh.querySelector('.sheet-head h2, h2');
+  if (h) { h.id = 'sheet-title'; sh.setAttribute('aria-labelledby', 'sheet-title'); } else sh.removeAttribute('aria-labelledby');
+  SHEET_BG().forEach(n => n && (n.inert = true));
+  document.body.classList.add('sheet-open'); sh.scrollTop = 0;
+  sh.focus({preventScroll:true});
+}
+addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('sheet-open')) { e.preventDefault(); closeSheet(); } });
+// selected state for toggle-style buttons (segments, filter chips, category picker, month grid) is exposed to assistive tech
+const PRESSABLE = 'div.seg button, .chips .chip, .cats .chip, .mgrid button';
+let pressedQueued = false;
+new MutationObserver(() => {
+  if (pressedQueued) return; pressedQueued = true;
+  requestAnimationFrame(() => { pressedQueued = false;
+    document.querySelectorAll(PRESSABLE).forEach(b => { const v = String(b.classList.contains('on')); if (b.getAttribute('aria-pressed') !== v) b.setAttribute('aria-pressed', v); });
+  });
+}).observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
 // Accessibility text sizes (Dynamic Type AX1+): switch to wrapping, stacked layouts
 function axCheck() { document.documentElement.classList.toggle('ax', parseFloat(getComputedStyle(document.documentElement).fontSize) >= 23); }
 axCheck(); addEventListener('resize', axCheck);
-function closeSheet() { document.body.classList.remove('sheet-open'); sheetState = null; }
+function closeSheet() {
+  document.body.classList.remove('sheet-open'); sheetState = null;
+  SHEET_BG().forEach(n => n && (n.inert = false));
+  const o = sheetOpener; sheetOpener = null;
+  if (o && o.isConnected && o !== document.body) o.focus({preventScroll:true});
+}
 
 const accOptions = (sel, filter = () => true) => S.accounts.filter(a => ((!a.hidden && !a.deleted) || a.id === sel) && filter(a))
   .sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(a => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
@@ -2125,7 +2176,7 @@ function backupBanner() {
   const DAY = 864e5, now = Date.now(), last = S.meta.lastBackup || 0;
   if (now - last < 7 * DAY || now - (S.meta.backupSnooze || 0) < DAY) return '';
   const days = last ? Math.floor((now - last) / DAY) : null;
-  return `<section class="backup-banner"><div class="bb-ic">☁️</div><div class="bb-t"><b>Yedek almayı unutma</b><small>${days == null ? 'Henüz hiç yedek almadın.' : `Son yedek ${days} gün önce.`} Veriler yalnızca bu telefonda duruyor.</small></div>
+  return `<section class="backup-banner"><div class="bb-ic">${ICON.cloud}</div><div class="bb-t"><b>Yedek almayı unutma</b><small>${days == null ? 'Henüz hiç yedek almadın.' : `Son yedek ${days} gün önce.`} Veriler yalnızca bu telefonda duruyor.</small></div>
     <div class="bb-actions"><button data-action="backup-later">Yarın hatırlat</button><button class="on" data-action="export-json">Yedek al</button></div></section>`;
 }
 async function fillStorageInfo() {
