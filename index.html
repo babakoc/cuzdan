@@ -153,16 +153,24 @@ header.big>div>.eyebrow:first-child{margin-top:10px}
 .bbar em{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--text);opacity:.55;border-radius:1px}
 .hero .bbar em{background:#fff}
 .warn-t{color:var(--warn) !important}
-.budget-card,.stats-card{display:block;width:100%;text-align:left}
-.stats-card .bc-head,.budget-card .bc-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.stats-card .bc-head h3,.budget-card .bc-head h3{margin:0}
+.budget-card{display:block;width:100%;text-align:left}
+.budget-card .bc-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.budget-card .bc-head h3{margin:0}
 .budget-card .bc-head span{font-weight:600}
-.stats-card .bc-head{align-items:center}
-.mini-stack{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden;margin-top:12px}
-.mini-stack i{display:block;min-width:3px}
-.mini-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:10px;font-size:var(--t-foot);color:var(--muted)}
-.mini-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
-.stats-card .bc-sub,.budget-card .bc-sub{font-size:var(--t-foot);color:var(--muted);margin-top:6px}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;min-height:44px;margin:-10px 0 4px;text-align:left}
+.card-head h3{margin:0 !important}
+.card-head span{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-sub);color:var(--accent);font-weight:500}
+.card-head .chev{color:var(--accent);opacity:1}
+.chg{display:block;font-size:var(--t-cap);font-weight:600;margin-top:2px}
+.tile .chg{display:inline-block;margin-top:2px;font-size:var(--t-cap);font-weight:600}
+.chg.pos{color:var(--pos) !important} .chg.neg{color:var(--neg) !important}
+.pbar{height:5px;border-radius:3px;background:var(--chip);margin-top:5px;overflow:hidden}
+.pbar i{display:block;height:100%;border-radius:3px}
+.pbar i.g{background:var(--pos-fill)} .pbar i.e{background:var(--neg-fill)}
+.period-row.cur{background:color-mix(in srgb,var(--accent-fill) 8%,transparent)}
+.period-row .a span{display:block;font-weight:500}
+.period-row .a small.pos{color:var(--pos)} .period-row .a small.neg{color:var(--neg)}
+.budget-card .bc-sub{font-size:var(--t-foot);color:var(--muted);margin-top:6px}
 
 /* chart window switcher */
 .chart-nav{display:flex;align-items:center;justify-content:space-between;margin:-4px 0 10px;background:var(--chip);border-radius:22px;padding:2px}
@@ -784,7 +792,7 @@ function monthStats(m) {
 const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, noteFilter:null, q:'', stack:[], donutOpen:new Set()};
 /* drill-down navigation: opening a category, an account or "Tümü" remembers where you came from, so the
    back button (and the edge swipe, through the browser history) returns there at the same scroll position */
-const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar', budget:'Bütçe', stats:'Analiz'};
+const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar', budget:'Bütçe', flow:'Dağılım', trend:'Gelir ve gider'};
 function drillTo(apply) {
   ui.stack.push({tab:ui.tab, accFilter:ui.accFilter, catFilter:ui.catFilter, noteFilter:ui.noteFilter, q:ui.q, y:window.scrollY, chartEnd:ui.chartEnd});
   ui.chartEnd = null;
@@ -890,40 +898,87 @@ VIEWS.home = () => {
     <div class="tile"><span>Gider</span><b class="num neg">${money(st.exp, false)}</b></div>
     <div class="tile"><span>Fark</span><b class="num ${st.inc - st.exp >= 0 ? 'pos' : 'neg'}">${money(st.inc - st.exp, false)}</b></div>
   </div>
-  ${statsTeaser(st)}
+  ${linkHead(donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok'), 'Gider dağılımı', 'open-flow', 'exp')}
+  ${linkHead(donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok'), 'Gelir dağılımı', 'open-flow', 'inc')}
   ${(() => { const T = budgetTotals(ui.month), prog = periodProgress(ui.month);
     if (!T.rows.length) return `<button class="list row" data-action="open-budget" style="margin-top:14px"><div class="ic" style="background:#4C5BFF22">🎯</div><div class="t"><b>Bütçe oluştur</b><small>Kategorilerine aylık sınır koy, gidişatı takip et</small></div>${ICON.rowChev}</button>`;
     const left = T.b - T.s;
     return `<button class="card budget-card" data-action="open-budget"><div class="bc-head"><h3>Bütçe</h3><span class="num ${left < 0 ? 'neg' : ''}">${left >= 0 ? `${money(left, false)} kaldı` : `${money(-left, false)} aşıldı`}</span></div>
       <div class="bc-sub num">${money(T.s, false)} / ${money(T.b, false)}${T.over ? ` · <b class="neg">${T.over} kategori aşıldı</b>` : ''}</div>${bbar(T.s, T.b, prog, true)}</button>`; })()}
+  ${linkHead(homeChart(), 'Gelir ve gider', 'open-trend')}
   <div class="sec-title">Son işlemler <a href="#" data-action="drill-txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t, null, true)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
 };
 
-// Özet keeps a compact preview; the full charts live on their own page (Analiz)
-function statsTeaser(st) {
-  const top = [...st.cats.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  const tot = top.reduce((s, [, v]) => s + v, 0);
-  const segs = top.slice(0, 5).map(([id, v], i) => ({id, v, color: CAT_COLORS[i]})); // same colors as the donut
-  const rest = tot - segs.reduce((s, x) => s + x.v, 0);
-  const bar = tot ? `<div class="mini-stack">${segs.map(x => `<i style="flex:${x.v};background:${x.color}"></i>`).join('')}${rest > 0 ? `<i style="flex:${rest};background:var(--muted2)"></i>` : ''}</div>` : '';
-  const legend = segs.slice(0, 3).map(x => `<span><i style="background:${x.color}"></i>${esc(D.cat.get(x.id)?.name || 'Kategorisiz')} %${Math.round(x.v / tot * 100)}</span>`).join('');
-  return `<button class="card stats-card" data-action="open-stats"><div class="bc-head"><h3>Gelir ve gider analizi</h3>${ICON.rowChev}</div>
-    <div class="bc-sub">${tot ? 'Dağılımlar ve 12 dönemlik grafik' : 'Bu dönem gider yok · 12 dönemlik grafik'}</div>${bar}${legend ? `<div class="mini-legend">${legend}</div>` : ''}</button>`;
+// Özet cards keep their charts; tapping a card's title opens its detail page
+const linkHead = (html, title, action, k) => html.replace(`<h3>${title}</h3>`,
+  `<button class="card-head" data-action="${action}"${k ? ` data-k="${k}"` : ''}><h3>${title}</h3><span>Ayrıntılar${ICON.rowChev}</span></button>`);
+const pctChange = (now, prev) => prev > 0.004 ? (now - prev) / prev * 100 : null;
+function changeTag(now, prev, goodUp) {
+  const p = pctChange(now, prev); if (p == null || Math.abs(p) < 0.5) return '';
+  const up = p > 0, good = up === goodUp;
+  return `<span class="chg ${good ? 'pos' : 'neg'}">${up ? '▲' : '▼'} %${Math.round(Math.abs(p))}</span>`;
 }
 
-VIEWS.stats = () => {
-  const st = monthStats(ui.month);
-  return `<header class="big"><div>${backBtn()}<h1>Analiz</h1></div></header>
+// Gider / gelir dağılımı detail: totals vs previous period and 6-period average, full donut, every category with its trend
+VIEWS.flow = () => {
+  const inc = ui.flowKind === 'inc', key = inc ? 'incCats' : 'cats', sumKey = inc ? 'inc' : 'exp';
+  const title = inc ? 'Gelir dağılımı' : 'Gider dağılımı';
+  const st = monthStats(ui.month), prevM = shiftMonth(ui.month, -1), prev = monthStats(prevM);
+  const hist = Array.from({length:6}, (_, i) => monthStats(shiftMonth(ui.month, -1 - i)));
+  const avgOf = f => { const v = hist.map(f).filter(x => x > 0.004); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0; };
+  const tot = st[sumKey], ptot = prev[sumKey], atot = avgOf(h => h[sumKey]);
+  const rows = [...st[key].entries()].filter(e => e[1] > 0.004).sort((a, b) => b[1] - a[1]);
+  // categories that had money last period but none now
+  const gone = [...prev[key].entries()].filter(([id, v]) => v > 0.004 && !(st[key].get(id) > 0.004));
+  const row = (id, v, i) => {
+    const c = D.cat.get(id), pv = prev[key].get(id) || 0, av = avgOf(h => h[key].get(id) || 0);
+    const color = (i < CAT_COLORS.length ? c?.color : `hsl(${(i * 47) % 360} 60% 55%)`) || '#64748B'; // same as the donut
+    return `<button class="row" ${c ? `data-action="cat-drill" data-id="${id}"` : ''}><div class="ic" style="background:${(c?.color || '#64748B')}22">${ico(c?.emoji || '•')}</div>
+      <div class="t"><b>${esc(c?.name || 'Kategorisiz')}</b><small class="num">Payı %${tot ? Math.round(v / tot * 100) : 0}</small><small class="num">Önceki ${pv ? money(pv, false) : '—'} · Ort. ${av ? money(av, false) : '—'}</small>
+      <div class="meter"><i style="width:${tot ? v / tot * 100 : 0}%;background:${color}"></i></div></div>
+      <div class="a num">${money(v, false)}${changeTag(v, pv, inc)}</div>${ICON.rowChev}</button>`;
+  };
+  return `<header class="big"><div>${backBtn()}<h1>${title}</h1></div></header>
   ${monthSwitch()}
   <div class="tiles">
-    <div class="tile"><span>Gelir</span><b class="num pos">${money(st.inc, false)}</b></div>
-    <div class="tile"><span>Gider</span><b class="num neg">${money(st.exp, false)}</b></div>
-    <div class="tile"><span>Fark</span><b class="num ${st.inc - st.exp >= 0 ? 'pos' : 'neg'}">${money(st.inc - st.exp, false)}</b></div>
+    <div class="tile"><span>Bu dönem</span><b class="num ${inc ? 'pos' : 'neg'}">${money(tot, false)}</b></div>
+    <div class="tile"><span>Önceki dönem</span><b class="num">${ptot ? money(ptot, false) : '—'}</b>${changeTag(tot, ptot, inc)}</div>
+    <div class="tile"><span>6 dönem ort.</span><b class="num">${atot ? money(atot, false) : '—'}</b>${changeTag(tot, atot, inc)}</div>
   </div>
-  ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
-  ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
-  ${homeChart()}`;
+  ${donutCard('Dağılım', st[key], inc ? 'Bu dönem gelir yok' : 'Bu dönem gider yok')}
+  ${rows.length ? `<div class="sec-title">Kategoriler<small>${rows.length} kategori</small></div><div class="list">${rows.map(([id, v], i) => row(id, v, i)).join('')}</div>` : ''}
+  ${gone.length ? `<div class="sec-title">Bu dönem hiç olmayanlar</div><div class="list">${gone.map(([id, pv]) => { const c = D.cat.get(id);
+    return `<button class="row" ${c ? `data-action="cat-drill" data-id="${id}"` : ''}><div class="ic" style="background:${(c?.color || '#64748B')}22">${ico(c?.emoji || '•')}</div><div class="t"><b>${esc(c?.name || 'Kategorisiz')}</b><small class="num">önceki ${money(pv, false)}</small></div><div class="a num">${money(0, false)}</div>${ICON.rowChev}</button>`; }).join('')}</div>` : ''}
+  <p class="note">▲▼ önceki döneme göre değişim. Ortalama, son 6 dönemden harcama olanların ortalamasıdır.</p>`;
+};
+
+// Gelir ve gider detail: the 12-period chart plus every period's numbers and totals
+VIEWS.trend = () => {
+  if (!ui.homeEnd) ui.homeEnd = ui.month;
+  const chart = homeChart(), end = ui.homeEnd;
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, -i)).map(m => ({m, ...monthStats(m)}));
+  const ti = ser.reduce((s, x) => s + x.inc, 0), te = ser.reduce((s, x) => s + x.exp, 0);
+  const rate = ti > 0.004 ? Math.round((ti - te) / ti * 100) : null;
+  const act = ser.filter(x => x.inc > 0.004 || x.exp > 0.004);
+  const best = act.length ? act.reduce((a, b) => (b.inc - b.exp > a.inc - a.exp ? b : a)) : null;
+  const worst = act.length ? act.reduce((a, b) => (b.inc - b.exp < a.inc - a.exp ? b : a)) : null;
+  const maxV = Math.max(1, ...ser.map(x => Math.max(x.inc, x.exp)));
+  return `<header class="big"><div>${backBtn()}<h1>Gelir ve gider</h1></div></header>
+  ${monthSwitch()}
+  ${chart}
+  <div class="tiles" style="margin-top:14px">
+    <div class="tile"><span>12 dönem gelir</span><b class="num pos">${money(ti, false)}</b></div>
+    <div class="tile"><span>12 dönem gider</span><b class="num neg">${money(te, false)}</b></div>
+    <div class="tile"><span>Birikim oranı</span><b class="num ${rate != null && rate < 0 ? 'neg' : ''}">${rate == null ? '—' : `%${rate}`}</b></div>
+  </div>
+  ${best && act.length > 1 ? `<div class="link-sum" style="grid-template-columns:1fr 1fr"><span>En iyi dönem · ${esc(monthLabel(best.m))}<b class="num pos">${best.inc - best.exp >= 0 ? '+' : '−'}${money(Math.abs(best.inc - best.exp), false)}</b></span><span>En zayıf dönem · ${esc(monthLabel(worst.m))}<b class="num ${worst.inc - worst.exp < 0 ? 'neg' : ''}">${worst.inc - worst.exp >= 0 ? '+' : '−'}${money(Math.abs(worst.inc - worst.exp), false)}</b></span></div>` : ''}
+  <div class="sec-title">Dönemler</div>
+  <div class="list">${ser.map(x => { const d = x.inc - x.exp;
+    return `<button class="row period-row ${x.m === ui.month ? 'cur' : ''}" data-action="goto-month" data-m="${x.m}"><div class="t"><b>${esc(monthLabel(x.m))}</b>
+      <div class="pbar"><i class="g" style="width:${x.inc / maxV * 100}%"></i></div><div class="pbar"><i class="e" style="width:${x.exp / maxV * 100}%"></i></div></div>
+      <div class="a num"><span class="pos">+${money(x.inc, false)}</span><small>−${money(x.exp, false)}</small><small class="${d >= 0 ? 'pos' : 'neg'}" style="font-weight:600">${d >= 0 ? '+' : '−'}${money(Math.abs(d), false)}</small></div></button>`; }).join('')}</div>
+  <p class="note">Bir döneme dokunursan sayfadaki dağılımlar o döneme geçer.</p>`;
 };
 
 function welcome() {
@@ -1725,7 +1780,8 @@ const A = {
     const b = d.back; if (b) { sheetState = b; if (b.cat?.id === d.catId) drawCatsSheet(); else closeSheet(); } else closeSheet();
     render(); toast(`${n} işlem güncellendi`);
   },
-  'open-stats'(el, e) { e?.preventDefault(); drillTo(() => { ui.tab = 'stats'; ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; }); },
+  'open-flow'(el, e) { e?.preventDefault(); const k = el.dataset.k; ui.donutOpen.add('Dağılım'); drillTo(() => { ui.tab = 'flow'; ui.flowKind = k; }); },
+  'open-trend'(el, e) { e?.preventDefault(); drillTo(() => { ui.tab = 'trend'; }); },
   'open-budget'(el, e) { e?.preventDefault(); drillTo(() => { ui.tab = 'budget'; ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; }); },
   'add-budget'(el) { budgetSheet(el?.dataset?.id || ''); if (el?.dataset?.id) sheetState.isNew = true; drawBudgetSheet(); },
   'edit-budget'(el) { budgetSheet(el.dataset.id); },
