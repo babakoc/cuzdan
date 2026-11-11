@@ -153,11 +153,16 @@ header.big>div>.eyebrow:first-child{margin-top:10px}
 .bbar em{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--text);opacity:.55;border-radius:1px}
 .hero .bbar em{background:#fff}
 .warn-t{color:var(--warn) !important}
-.budget-card{display:block;width:100%;text-align:left}
-.budget-card .bc-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.budget-card .bc-head h3{margin:0}
+.budget-card,.stats-card{display:block;width:100%;text-align:left}
+.stats-card .bc-head,.budget-card .bc-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.stats-card .bc-head h3,.budget-card .bc-head h3{margin:0}
 .budget-card .bc-head span{font-weight:600}
-.budget-card .bc-sub{font-size:var(--t-foot);color:var(--muted);margin-top:6px}
+.stats-card .bc-head{align-items:center}
+.mini-stack{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden;margin-top:12px}
+.mini-stack i{display:block;min-width:3px}
+.mini-legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:10px;font-size:var(--t-foot);color:var(--muted)}
+.mini-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.stats-card .bc-sub,.budget-card .bc-sub{font-size:var(--t-foot);color:var(--muted);margin-top:6px}
 
 /* chart window switcher */
 .chart-nav{display:flex;align-items:center;justify-content:space-between;margin:-4px 0 10px;background:var(--chip);border-radius:22px;padding:2px}
@@ -209,7 +214,7 @@ header.big>div>.eyebrow:first-child{margin-top:10px}
 .card h3{font-size:var(--t-body)}
 .sec-title{margin:26px 4px 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .sec-title small{font-size:var(--t-foot);color:var(--muted);font-weight:500}
-.sec-title a,.sec-title button{font-size:var(--t-callout);color:var(--accent);font-weight:500}
+.sec-title a,.sec-title button{text-decoration:none;font-size:var(--t-callout);color:var(--accent);font-weight:500}
 
 .donut-wrap{display:flex;gap:16px;align-items:center}
 .donut{flex:0 0 132px;position:relative}
@@ -779,7 +784,7 @@ function monthStats(m) {
 const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, noteFilter:null, q:'', stack:[], donutOpen:new Set()};
 /* drill-down navigation: opening a category, an account or "Tümü" remembers where you came from, so the
    back button (and the edge swipe, through the browser history) returns there at the same scroll position */
-const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar', budget:'Bütçe'};
+const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar', budget:'Bütçe', stats:'Analiz'};
 function drillTo(apply) {
   ui.stack.push({tab:ui.tab, accFilter:ui.accFilter, catFilter:ui.catFilter, noteFilter:ui.noteFilter, q:ui.q, y:window.scrollY, chartEnd:ui.chartEnd});
   ui.chartEnd = null;
@@ -885,16 +890,40 @@ VIEWS.home = () => {
     <div class="tile"><span>Gider</span><b class="num neg">${money(st.exp, false)}</b></div>
     <div class="tile"><span>Fark</span><b class="num ${st.inc - st.exp >= 0 ? 'pos' : 'neg'}">${money(st.inc - st.exp, false)}</b></div>
   </div>
-  ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
-  ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
+  ${statsTeaser(st)}
   ${(() => { const T = budgetTotals(ui.month), prog = periodProgress(ui.month);
     if (!T.rows.length) return `<button class="list row" data-action="open-budget" style="margin-top:14px"><div class="ic" style="background:#4C5BFF22">🎯</div><div class="t"><b>Bütçe oluştur</b><small>Kategorilerine aylık sınır koy, gidişatı takip et</small></div>${ICON.rowChev}</button>`;
     const left = T.b - T.s;
     return `<button class="card budget-card" data-action="open-budget"><div class="bc-head"><h3>Bütçe</h3><span class="num ${left < 0 ? 'neg' : ''}">${left >= 0 ? `${money(left, false)} kaldı` : `${money(-left, false)} aşıldı`}</span></div>
       <div class="bc-sub num">${money(T.s, false)} / ${money(T.b, false)}${T.over ? ` · <b class="neg">${T.over} kategori aşıldı</b>` : ''}</div>${bbar(T.s, T.b, prog, true)}</button>`; })()}
-  ${homeChart()}
   <div class="sec-title">Son işlemler <a href="#" data-action="drill-txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t, null, true)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
+};
+
+// Özet keeps a compact preview; the full charts live on their own page (Analiz)
+function statsTeaser(st) {
+  const top = [...st.cats.entries()].filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const tot = top.reduce((s, [, v]) => s + v, 0);
+  const segs = top.slice(0, 5).map(([id, v], i) => ({id, v, color: CAT_COLORS[i]})); // same colors as the donut
+  const rest = tot - segs.reduce((s, x) => s + x.v, 0);
+  const bar = tot ? `<div class="mini-stack">${segs.map(x => `<i style="flex:${x.v};background:${x.color}"></i>`).join('')}${rest > 0 ? `<i style="flex:${rest};background:var(--muted2)"></i>` : ''}</div>` : '';
+  const legend = segs.slice(0, 3).map(x => `<span><i style="background:${x.color}"></i>${esc(D.cat.get(x.id)?.name || 'Kategorisiz')} %${Math.round(x.v / tot * 100)}</span>`).join('');
+  return `<button class="card stats-card" data-action="open-stats"><div class="bc-head"><h3>Gelir ve gider analizi</h3>${ICON.rowChev}</div>
+    <div class="bc-sub">${tot ? 'Dağılımlar ve 12 dönemlik grafik' : 'Bu dönem gider yok · 12 dönemlik grafik'}</div>${bar}${legend ? `<div class="mini-legend">${legend}</div>` : ''}</button>`;
+}
+
+VIEWS.stats = () => {
+  const st = monthStats(ui.month);
+  return `<header class="big"><div>${backBtn()}<h1>Analiz</h1></div></header>
+  ${monthSwitch()}
+  <div class="tiles">
+    <div class="tile"><span>Gelir</span><b class="num pos">${money(st.inc, false)}</b></div>
+    <div class="tile"><span>Gider</span><b class="num neg">${money(st.exp, false)}</b></div>
+    <div class="tile"><span>Fark</span><b class="num ${st.inc - st.exp >= 0 ? 'pos' : 'neg'}">${money(st.inc - st.exp, false)}</b></div>
+  </div>
+  ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
+  ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
+  ${homeChart()}`;
 };
 
 function welcome() {
@@ -1696,6 +1725,7 @@ const A = {
     const b = d.back; if (b) { sheetState = b; if (b.cat?.id === d.catId) drawCatsSheet(); else closeSheet(); } else closeSheet();
     render(); toast(`${n} işlem güncellendi`);
   },
+  'open-stats'(el, e) { e?.preventDefault(); drillTo(() => { ui.tab = 'stats'; ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; }); },
   'open-budget'(el, e) { e?.preventDefault(); drillTo(() => { ui.tab = 'budget'; ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; }); },
   'add-budget'(el) { budgetSheet(el?.dataset?.id || ''); if (el?.dataset?.id) sheetState.isNew = true; drawBudgetSheet(); },
   'edit-budget'(el) { budgetSheet(el.dataset.id); },
