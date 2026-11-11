@@ -55,6 +55,14 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .month span,.month .mlabel{min-width:150px;text-align:center;font-weight:650;font-size:17px;width:auto;height:auto;border-radius:10px;display:block;color:var(--text);padding:2px 6px}
 .month .mlabel .caret{font-style:normal;font-size:11px;color:var(--muted);margin-left:5px;vertical-align:2px}
 .month .mlabel small{display:block;font-size:12px;color:var(--muted);font-weight:600;margin-top:1px}
+.backup-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;background:var(--card);border-radius:20px;padding:14px;margin-bottom:14px;box-shadow:var(--shadow);border:1.5px solid rgba(245,165,36,.45)}
+.backup-banner .bb-ic{font-size:26px}
+.backup-banner .bb-t{flex:1;min-width:0}
+.backup-banner .bb-t b{display:block;font-size:16px}
+.backup-banner .bb-t small{display:block;color:var(--muted);font-size:13px;margin-top:2px}
+.backup-banner .bb-actions{display:flex;gap:8px;width:100%}
+.backup-banner .bb-actions button{flex:1;height:40px;border-radius:12px;background:var(--chip);font-weight:650;font-size:14px}
+.backup-banner .bb-actions button.on{background:var(--accent);color:#fff}
 .to-today{display:flex;justify-content:center;margin:-6px 0 10px}
 .to-today button{font-size:13px;font-weight:650;color:var(--accent);background:var(--chip);padding:6px 12px;border-radius:999px}
 .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 16px}
@@ -671,6 +679,7 @@ function render() {
   document.querySelectorAll('nav.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
   $('#view').innerHTML = (VIEWS[ui.tab] || VIEWS.home)();
   if (ui.tab === 'txs') renderTxList();
+  if (ui.tab === 'settings') fillStorageInfo();
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2400); }
 
@@ -747,6 +756,7 @@ VIEWS.home = () => {
   const recent = (D.byMonth.get(ui.month) || []).filter(t => t.date <= D.today || ui.month !== curMonth()).slice(0, 6);
   return `
   <header class="big"><div><div class="eyebrow">${new Date().toLocaleDateString('tr-TR', {weekday:'long', day:'numeric', month:'long'})}</div><h1>Özet</h1></div></header>
+  ${backupBanner()}
   <section class="hero">
     <div class="label">Net varlık</div>
     <div class="big-amt num">${nw[0]}<small>,${nw[1] || '00'}</small></div>
@@ -1003,6 +1013,8 @@ VIEWS.settings = () => {
     <button class="row" data-action="add-acc"><div class="ic" style="background:#4C5BFF22">🏦</div><div class="t"><b>Yeni hesap</b><small>Banka, kart, nakit, kredi…</small></div>${ICON.rowChev}</button>
   </div>
   <div class="sec-title">Yedekleme</div>
+  <div class="list" style="margin-bottom:10px"><div class="row"><div class="ic" style="background:#64748B22">💾</div><div class="t"><b>Bu cihazdaki veriler</b><small id="storage-info">kontrol ediliyor…</small></div>
+    <button id="persist-btn" class="pay-btn" data-action="ask-persist" style="display:none">Kalıcı yap</button></div></div>
   <div class="list">
     <button class="row" data-action="export-json"><div class="ic" style="background:#12A26B22">☁️</div><div class="t"><b>Yedek al</b><small>Son yedek: ${esc(last)}</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="import-json"><div class="ic" style="background:#0EA5E922">↩️</div><div class="t"><b>Yedekten geri yükle</b><small>Cüzdan .json dosyası</small></div>${ICON.rowChev}</button>
@@ -1402,6 +1414,8 @@ const A = {
     const b = d.back; if (b) { sheetState = b; if (b.cat?.id === d.catId) drawCatsSheet(); else closeSheet(); } else closeSheet();
     render(); toast(`${n} işlem güncellendi`);
   },
+  'backup-later'() { S.meta.backupSnooze = Date.now(); save(); render(); },
+  async 'ask-persist'() { const ok = await askPersist(); toast(ok ? 'Kalıcı depolama açıldı' : 'Tarayıcı izin vermedi; uygulamayı ana ekrandan açınca tekrar dene'); fillStorageInfo(); },
   'clear-note'() { ui.noteFilter = null; render(); },
   'drill-txs'(el, e) { e?.preventDefault(); drillTo(() => { ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'nav-back'() { if (!ui.stack.length) return; try { history.back(); } catch { goBack(); } },
@@ -1584,15 +1598,46 @@ document.addEventListener('change', e => {
 
 /* ---------- backup ---------- */
 async function exportJSON() {
-  S.meta.lastBackup = Date.now();
   const name = `cuzdan-yedek-${todayStr()}.json`;
   const blob = new Blob([JSON.stringify(S)], {type:'application/json'});
   const file = new File([blob], name, {type:'application/json'});
   try {
     if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file], title:'Cüzdan yedeği'}); }
     else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+    S.meta.lastBackup = Date.now(); S.meta.backupSnooze = 0;
     save(); render(); toast('Yedek hazır');
   } catch (err) { if (err.name !== 'AbortError') toast('Yedek alınamadı: ' + err.message); }
+}
+
+/* ---------- keeping the data safe ----------
+   Data lives only in this device's IndexedDB. Persistent storage tells the OS not to evict it under
+   storage pressure; the reminder nudges a JSON backup (to iCloud Drive) at least once a week. */
+async function storageStatus() {
+  const st = navigator.storage; if (!st) return {supported:false};
+  let persisted = false, usage = 0;
+  try { persisted = await st.persisted(); } catch {}
+  try { usage = (await st.estimate()).usage || 0; } catch {}
+  return {supported:true, persisted, usage};
+}
+async function askPersist() {
+  try { if (navigator.storage?.persist) { const ok = await navigator.storage.persist(); S.meta.persist = ok; save(); return ok; } } catch {}
+  return false;
+}
+const fmtBytes = b => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toLocaleString('tr-TR', {maximumFractionDigits:1})} MB`;
+function backupBanner() {
+  if (!S.txs.length) return '';
+  const DAY = 864e5, now = Date.now(), last = S.meta.lastBackup || 0;
+  if (now - last < 7 * DAY || now - (S.meta.backupSnooze || 0) < DAY) return '';
+  const days = last ? Math.floor((now - last) / DAY) : null;
+  return `<section class="backup-banner"><div class="bb-ic">☁️</div><div class="bb-t"><b>Yedek almayı unutma</b><small>${days == null ? 'Henüz hiç yedek almadın.' : `Son yedek ${days} gün önce.`} Veriler yalnızca bu telefonda duruyor.</small></div>
+    <div class="bb-actions"><button data-action="backup-later">Yarın hatırlat</button><button class="on" data-action="export-json">Yedek al</button></div></section>`;
+}
+async function fillStorageInfo() {
+  const el = $('#storage-info'); if (!el) return;
+  const st = await storageStatus(); if (!$('#storage-info')) return;
+  if (!st.supported) { el.textContent = 'Bu tarayıcı depolama bilgisi vermiyor'; return; }
+  el.textContent = `${st.persisted ? 'Kalıcı depolama açık' : 'Kalıcı depolama kapalı'} · ${fmtBytes(st.usage)} kullanılıyor`;
+  const btn = $('#persist-btn'); if (btn) btn.style.display = st.persisted ? 'none' : '';
 }
 $('#file-icon').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f || !sheetState) return;
@@ -1740,6 +1785,7 @@ window.addEventListener('popstate', () => { if (sheetState) closeSheet(); goBack
     if (k) toast(`${k} tekrarlayan işlem eklendi`);
   });
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (S.accounts.length) storageStatus().then(st => { if (st.supported && !st.persisted) askPersist(); });
 })();
 </script>
 </body>
