@@ -641,9 +641,14 @@ function derive() {
   for (const l of byMonth.values()) l.sort(txSort);
   let assets = 0, debts = 0;
   for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
-  let loanDebt = 0; for (const l of S.loans || []) loanDebt += loanState(l).remaining;
-  debts -= loanDebt;
-  D = {acc, cat, bal, future, byMonth, assets, debts, loanDebt, today};
+  // Loans weigh on net worth only by the installments due up to the end of the current period (overdue included),
+  // the same way a card only shows what has been charged so far, not its future installments.
+  // The full remaining balance is still shown under Hesaplar → Krediler (loanDebt).
+  const pEnd = periodRange(periodKey(today))[1];
+  let loanDebt = 0, loanDue = 0;
+  for (const l of S.loans || []) { const st = loanState(l); loanDebt += st.remaining; for (const r of st.rows) if (!r.paid && r.date <= pEnd) loanDue += r.amount; }
+  loanDue = r2(loanDue); debts -= loanDue;
+  D = {acc, cat, bal, future, byMonth, assets, debts, loanDebt, loanDue, today};
 }
 const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
 const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
