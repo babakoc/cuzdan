@@ -327,7 +327,7 @@ const DB = {
   async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 };
-const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], loans:[], icons:{}, meta:{}});
+const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], loans:[], icons:{}, noteIcons:{}, meta:{}});
 
 /* ---------- icons ----------
    An icon value is either an emoji or "img:<id>", pointing at an uploaded picture in S.icons.
@@ -344,6 +344,24 @@ const ICON_POOL = [
   ['Aile ve sosyal', '👶 🧸 🐶 🐱 🎂 💐 ❤️ 👪 🙏'],
   ['Diğer', '⭐ ✅ 📌 🔔 🌱 ☀️ 🌙 🔁 ⇄ ❓ 🏷️']
 ].map(([g, s]) => [g, s.split(' ')]);
+/* full emoji library: Unicode's emoji list (emojibase) + Unicode CLDR Turkish names for search.
+   Downloaded once when first needed (~1 MB); the service worker keeps it for offline use. */
+const EMOJI_GROUPS = {0:'Yüzler ve duygular', 1:'İnsanlar ve vücut', 3:'Hayvanlar ve doğa', 4:'Yiyecek ve içecek', 5:'Seyahat ve yerler', 6:'Etkinlikler', 7:'Nesneler', 8:'Semboller', 9:'Bayraklar'};
+let emojiLib = null, emojiLibP = null;
+function loadEmojiLib() {
+  if (!emojiLibP) emojiLibP = Promise.all([
+    fetch('https://cdn.jsdelivr.net/npm/emojibase-data@16.0.0/en/compact.json').then(r => r.json()),
+    fetch('https://cdn.jsdelivr.net/npm/cldr-annotations-full@46.0.0/annotations/tr/annotations.json').then(r => r.json()).catch(() => null)
+  ]).then(([list, tr]) => {
+    const ann = tr?.annotations?.annotations || {};
+    emojiLib = list.filter(e => e.group != null && e.group !== 2).sort((a, b) => a.order - b.order).map(e => {
+      const t = ann[e.unicode] || ann[e.unicode.replace(/️/g, '')];
+      return {u:e.unicode, g:e.group, s:[...(t?.default || []), ...(t?.tts || []), e.label, ...(e.tags || [])].join(' ').toLocaleLowerCase('tr')};
+    });
+    return emojiLib;
+  }).catch(err => { emojiLibP = null; throw err; });
+  return emojiLibP;
+}
 function ico(v, cls = '') {
   if (v && v.startsWith('img:')) { const u = S.icons?.[v.slice(4)]; return u ? `<img class="ico-img ${cls}" src="${u}" alt="">` : '•'; }
   return esc(v || '•');
@@ -545,7 +563,7 @@ function upcomingIn(m) {
 }
 function vRow(u, ctxAcc) {
   const c = D.cat.get(u.categoryId), tc = topCat(u.categoryId), isT = u.type === 'transfer';
-  const icon = u.icon || (isT ? '⇄' : c?.emoji || tc?.emoji || '•'), color = isT ? '#64748B' : tc?.color || '#64748B';
+  const icon = u.icon || (isT ? '⇄' : noteIconFor(u.categoryId, u.note) || c?.emoji || tc?.emoji || '•'), color = isT ? '#64748B' : tc?.color || '#64748B';
   const title = u.v === 'card' ? 'Kart son ödeme' : isT ? 'Transfer' : c?.name || 'Kategorisiz';
   const sub = isT ? `${u.accountId ? accName(u.accountId) : 'Hesap seçilmedi'} → ${accName(u.toAccountId)}` : `${c?.parentId && D.cat.get(c.parentId) ? D.cat.get(c.parentId).name + ' · ' : ''}${accName(u.accountId)}`;
   const v = u.type === 'income' ? u.amount : u.type === 'expense' ? -u.amount : ctxAcc === u.toAccountId ? u.amount : ctxAcc === u.accountId ? -u.amount : 0;
@@ -660,7 +678,7 @@ function txRow(t, ctxAcc, withDate) {
     amt = (t.amount >= 0 ? '+' : '−') + money(Math.abs(t.amount)); cls = t.amount >= 0 ? 'pos' : '';
   } else {
     const c = D.cat.get(t.categoryId), tc = topCat(t.categoryId);
-    icon = t.icon || c?.emoji || tc?.emoji || '•'; color = tc?.color || '#64748B';
+    icon = t.icon || noteIconFor(t.categoryId, t.note) || c?.emoji || tc?.emoji || '•'; color = tc?.color || '#64748B';
     // the category is the headline; the parent category and account go below
     title = c?.name || 'Kategorisiz';
     sub = `${c?.parentId && D.cat.get(c.parentId) ? D.cat.get(c.parentId).name + ' · ' : ''}${accName(t.accountId)}`;
@@ -679,7 +697,7 @@ const VIEWS = {};
 // donut + legend for a {key -> amount} map; keys are category ids unless nameOf says otherwise
 // donut + legend for a {key -> amount} map; keys are category ids unless nameOf says otherwise.
 // Slices and legend rows drill down; "Diğerleri" expands the card to show every item.
-function donutCard(title, map, empty, nameOf, drillOf) {
+function donutCard(title, map, empty, nameOf, drillOf, iconOf) {
   const sorted = [...map.entries()].filter(e => e[1] > 0.004).sort((a, b) => b[1] - a[1]);
   const total = sorted.reduce((s, e) => s + e[1], 0);
   if (!total) return `<section class="card"><h3>${title}</h3><div class="empty" style="padding:16px">${empty}</div></section>`;
@@ -687,7 +705,7 @@ function donutCard(title, map, empty, nameOf, drillOf) {
   const shown = open || !many ? sorted : sorted.slice(0, LIMIT);
   const colorAt = i => i < CAT_COLORS.length ? CAT_COLORS[i] : `hsl(${(i * 47) % 360} 60% 55%)`;
   const segs = shown.map(([id, v], i) => { const c = D.cat.get(id), n = nameOf?.(id);
-    return {id, v, attr:drillOf ? drillOf(id) : c && !n ? `data-action="cat-drill" data-id="${id}"` : '', name:n || c?.name || 'Kategorisiz', emoji:n ? '' : c?.emoji || '',
+    return {id, v, attr:drillOf ? drillOf(id) : c && !n ? `data-action="cat-drill" data-id="${id}"` : '', name:n || c?.name || 'Kategorisiz', emoji:iconOf ? iconOf(id) || '' : n ? '' : c?.emoji || '',
       color:(nameOf || i >= CAT_COLORS.length ? colorAt(i) : c?.color) || '#64748B'}; });
   const more = `data-action="donut-more" data-k="${esc(title)}"`;
   if (!open && many) segs.push({id:'_rest', v:sorted.slice(LIMIT).reduce((s, x) => s + x[1], 0), name:`Diğerleri (${sorted.length - LIMIT})`, color:'#94A3B8', attr:more});
@@ -801,7 +819,7 @@ VIEWS.accounts = () => {
 
 VIEWS.txs = () => {
   const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter);
-  return `<header class="big"><div>${backBtn()}<h1>${a ? esc(a.name) : 'İşlemler'}</h1></div>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
+  return `<header class="big"><div>${backBtn()}<h1>${a ? esc(a.name) : 'İşlemler'}</h1></div>${!a && c && ui.noteFilter ? `<button class="icon-btn" data-action="edit-note" data-cat="${c.id}" data-key="${esc(ui.noteFilter)}" aria-label="Notu düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
   ${a ? accHero(a) : ''}
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c || ui.noteFilter != null) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)}${c.link ? ' · gelir + gider' : ''} ✕</button>` : ''}${ui.noteFilter != null ? `<button class="chip on" data-action="clear-note">“${esc(noteName(ui.noteFilter))}” ✕</button>` : ''}</div>` : ''}
@@ -812,6 +830,7 @@ VIEWS.txs = () => {
 /* charts for one category: its last 12 periods, and how its subcategories split the selected period */
 /* notes as the level below a subcategory: "Elektrik" under Faturalar, "YouTube" under Abonelikler.
    Grouped case-insensitively, ignoring installment suffixes like "(3/12)". */
+const noteIconFor = (catId, note) => S.noteIcons?.[`${catId}|${noteKey(note)}`] || null;
 const noteKey = n => String(n || '').replace(/\s*\(\d+\/\d+\)\s*$/, '').trim().toLocaleLowerCase('tr');
 const noteName = k => { if (!k) return 'Notsuz'; const t = S.txs.find(x => noteKey(x.note) === k); return t ? String(t.note).replace(/\s*\(\d+\/\d+\)\s*$/, '').trim() : k; };
 // the category / note filter of the transactions screen, shared by the list and its charts
@@ -860,7 +879,7 @@ function catCharts(c) {
   if (!kids.length && !c.link && note == null) {
     const map = new Map();
     for (const t of D.byMonth.get(ui.month) || []) if (t.type === c.kind && filterMatch(t)) { const k = noteKey(t.note); map.set(k, (map.get(k) || 0) + t.amount); }
-    if (map.size > 1 || (map.size === 1 && !map.has(''))) html += donutCard(`${esc(c.name)} · notlar`, map, '', k => noteName(k), k => `data-action="note-drill" data-note="${esc(k)}"`);
+    if (map.size > 1 || (map.size === 1 && !map.has(''))) html += donutCard(`${esc(c.name)} · notlar`, map, '', k => noteName(k), k => `data-action="note-drill" data-note="${esc(k)}"`, k => noteIconFor(c.id, k));
   }
   return html;
 }
@@ -1021,6 +1040,7 @@ function txSheet(t) {
 function iconCtx() {
   const d = sheetState;
   if (d.mode === 'edit') return {cur:d.cat.emoji || '', def:null, set:v => { d.cat.emoji = v; }, redraw:drawCatsSheet};
+  if (d.isNote) return {cur:d.icon || '', def:D.cat.get(d.catId)?.emoji || '•', defLabel:'Kategorinin simgesi', set:v => { d.icon = v || null; }, redraw:drawNoteSheet};
   if (d.isLoan) return {cur:d.icon || '', def:'🏦', defLabel:'Varsayılan simge', set:v => { d.icon = v || null; }, redraw:drawLoanSheet};
   if (d.isAcc) return {cur:d.icon || '', def:ACC_ICON[d.type] || '👛', defLabel:'Hesap türünün simgesi', set:v => { d.icon = v || null; }, redraw:drawAccSheet};
   const c = D.cat.get(d.categoryId), tc = topCat(d.categoryId);
@@ -1036,8 +1056,24 @@ function drawIconPicker() {
     <div class="sub-label between"><span>Yüklediklerim</span>${mine.length ? `<button data-action="icon-manage">${d.iconManage ? 'Bitti' : 'Kaldır'}</button>` : ''}</div>
     <div class="ico-grid"><button class="ico-tile add" data-action="icon-upload" aria-label="Görsel yükle">＋</button>${mine.map(id => d.iconManage
       ? `<button class="ico-tile del" data-action="icon-del" data-id="${id}">${ico('img:' + id)}<i>✕</i></button>` : tile('img:' + id)).join('')}</div>
-    <div class="custom-emoji"><input id="emoji-in" placeholder="Ya da bir emoji yaz" autocomplete="off"><button data-action="icon-custom">Kullan</button></div>
-    ${ICON_POOL.map(([g, list]) => `<div class="sub-label">${g}</div><div class="ico-grid">${list.map(tile).join('')}</div>`).join('')}`);
+    <div class="search" style="margin:0 0 10px">${ICON.search}<input id="emoji-q" type="search" placeholder="Emoji ara: pizza, fatura, araba…" value="${esc(d.emojiQ || '')}" autocomplete="off"></div>
+    <div id="emoji-results">${emojiResults()}</div>
+    <div class="custom-emoji"><input id="emoji-in" placeholder="Ya da bir emoji yapıştır" autocomplete="off"><button data-action="icon-custom">Kullan</button></div>`);
+}
+// either the search result, or frequent icons followed by the whole library (loaded on demand)
+function emojiResults() {
+  const d = sheetState, ctx = iconCtx(), q = String(d.emojiQ || '').trim().toLocaleLowerCase('tr');
+  const tile = v => `<button class="ico-tile ${ctx.cur === v ? 'on' : ''}" data-action="icon-pick" data-v="${esc(v)}">${ico(v)}</button>`;
+  if (q) {
+    if (!emojiLib) { loadEmojiLib().then(() => { if (sheetState === d) $('#emoji-results').innerHTML = emojiResults(); }).catch(() => toast('Emoji kütüphanesi yüklenemedi')); return '<div class="empty" style="padding:20px">Kütüphane yükleniyor…</div>'; }
+    const words = q.split(/\s+/), hits = emojiLib.filter(e => words.every(w => e.s.includes(w))).slice(0, 240);
+    return hits.length ? `<div class="sub-label">${hits.length === 240 ? '240+' : hits.length} sonuç</div><div class="ico-grid">${hits.map(e => tile(e.u)).join('')}</div>` : '<div class="empty" style="padding:20px">Sonuç yok</div>';
+  }
+  let html = `<div class="sub-label">Sık kullanılanlar</div><div class="ico-grid">${ICON_POOL.flatMap(([, l]) => l).map(tile).join('')}</div>`;
+  if (!d.allEmoji) return html + `<button class="secondary" data-action="emoji-all" style="margin:-6px 0 18px">Tüm emojiler (1.900+)</button>`;
+  if (!emojiLib) { loadEmojiLib().then(() => { if (sheetState === d) $('#emoji-results').innerHTML = emojiResults(); }).catch(() => { toast('Emoji kütüphanesi yüklenemedi'); d.allEmoji = false; if (sheetState === d) $('#emoji-results').innerHTML = emojiResults(); }); return html + '<div class="empty" style="padding:20px">Kütüphane yükleniyor…</div>'; }
+  for (const [g, name] of Object.entries(EMOJI_GROUPS)) { const l = emojiLib.filter(e => e.g === +g); if (l.length) html += `<div class="sub-label">${name}</div><div class="ico-grid">${l.map(e => tile(e.u)).join('')}</div>`; }
+  return html;
 }
 function drawTxSheet() {
   if (sheetState.picking) return drawIconPicker();
@@ -1183,6 +1219,36 @@ function drawLoanDetail() {
     <div class="list">${st.rows.map(row).join('')}</div>
     <p class="note">"Öde" dediğinde taksit bugünün tarihiyle ${esc(accName(l.payFrom || l.accountId))} hesabından "Kredi" gideri olarak eklenir. Ödenmiş bir taksite dokunup tarihini veya tutarını düzeltebilir, silerek ödenmemiş hale getirebilirsin.</p>`);
 }
+/* ---------- notes under a category: rename, icon for all, move to another category ---------- */
+function notesOf(catId) {
+  const m = new Map();
+  for (const t of S.txs) {
+    if (t.categoryId !== catId) continue;
+    const k = noteKey(t.note); if (!k) continue;
+    const o = m.get(k) || {key:k, name:String(t.note).replace(/\s*\(\d+\/\d+\)\s*$/, '').trim(), count:0, total:0, last:''};
+    o.count++; o.total += t.amount; if (t.date > o.last) o.last = t.date; m.set(k, o);
+  }
+  return [...m.values()].sort((a, b) => b.count - a.count || b.last.localeCompare(a.last));
+}
+function noteSheet(catId, key, back) {
+  const n = notesOf(catId).find(x => x.key === key) || {key, name:noteName(key), count:0, total:0};
+  sheetState = {isNote:true, catId, key, name:n.name, newName:n.name, count:n.count, total:n.total, icon:S.noteIcons?.[`${catId}|${key}`] || null, moveTo:catId, back};
+  drawNoteSheet();
+}
+function drawNoteSheet() {
+  if (sheetState.picking) return drawIconPicker();
+  const d = sheetState, c = D.cat.get(d.catId), tc = topCat(d.catId), col = tc?.color || '#64748B';
+  const same = S.categories.filter(x => x.kind === c?.kind && !x.hidden).sort((a, b) => catPath(a.id).localeCompare(catPath(b.id), 'tr'));
+  openSheet(`
+    <div class="sheet-head"><button data-action="note-cancel">Vazgeç</button><h2>Not</h2><button data-action="save-note" style="font-weight:700">Kaydet</button></div>
+    <button class="tx-icon" data-action="icon-open" style="margin-bottom:14px"><span class="ic-big" style="background:${col}22;color:${col}">${ico(d.icon || c?.emoji || '•')}</span><small>${d.icon ? 'Simgeyi değiştir' : 'Bu not için simge seç'}</small></button>
+    <div class="form">
+      <div class="field"><label>Not</label><input data-f="newName" value="${esc(d.newName)}"></div>
+      <div class="field"><label>Kategori</label><select data-f="moveTo">${same.map(x => `<option value="${x.id}" ${x.id === d.moveTo ? 'selected' : ''}>${esc(catPath(x.id))}</option>`).join('')}</select></div>
+    </div>
+    <p class="note">${d.count} işlem · toplam ${money(d.total)}. Burada yaptığın değişiklik bu kategorideki "${esc(d.name)}" notlu tüm işlemlere (ve aynı notlu tekrarlayan işlemlere) uygulanır. Simge, sonradan bu notla eklediğin işlemlerde de kullanılır; tek tek simge verdiğin işlemler kendi simgesini korur. Başka bir notun adını yazarsan iki not birleşir.</p>
+    <button class="secondary" data-action="note-show">Bu notun işlemlerini göster</button>`);
+}
 function catsSheet() {
   sheetState = {mode:'list', kind:'expense'};
   drawCatsSheet();
@@ -1211,13 +1277,19 @@ function drawCatsSheet() {
         <div class="field"><label>Gizle</label><span style="flex:1"></span><input type="checkbox" data-cf="hidden" ${c.hidden ? 'checked' : ''}></div>
       </div>
       <p class="note">Gizlenen kategoriler eski işlemlerde görünmeye devam eder, yeni işlem eklerken listede çıkmaz.</p>
-      <p class="note">Kredi, Yatırım ve Borç adlı gelir ve gider kategorileri birbirine bağlıdır: birine dokununca iki taraftaki hareketler birlikte listelenir.</p>`);
+      <p class="note">Kredi, Yatırım ve Borç adlı gelir ve gider kategorileri birbirine bağlıdır: birine dokununca iki taraftaki hareketler birlikte listelenir.</p>
+      ${(() => { if (c.isNew) return ''; const notes = notesOf(c.id); if (!notes.length) return '';
+        return `<div class="sub-label between" style="margin-top:18px"><span>Notlar (${notes.length})</span></div>
+        ${notes.length > 12 ? `<div class="search" style="margin:0 0 8px"><input id="note-q" placeholder="Not ara" autocomplete="off"></div>` : ''}
+        <div class="list" id="note-list">${notes.map(n => `<button class="row" data-action="edit-note" data-cat="${c.id}" data-key="${esc(n.key)}" data-name="${esc(n.name.toLocaleLowerCase('tr'))}">
+          <div class="ic" style="background:${(c.color || '#64748B')}22">${ico(S.noteIcons?.[`${c.id}|${n.key}`] || c.emoji)}</div>
+          <div class="t"><b>${esc(n.name)}</b><small>${n.count} işlem · ${money(n.total, false)} · son ${shortDate(n.last)}</small></div>${ICON.rowChev}</button>`).join('')}</div>`; })()}`);
   }
 }
 
 /* ---------- actions ---------- */
 const A = {
-  'icon-open'() { sheetState.picking = true; sheetState.iconManage = false; drawIconPicker(); },
+  'icon-open'() { Object.assign(sheetState, {picking:true, iconManage:false, emojiQ:'', allEmoji:false}); drawIconPicker(); },
   'icon-cancel'() { sheetState.picking = false; iconCtx().redraw(); },
   'icon-pick'(el) { const c = iconCtx(); c.set(el.dataset.v); sheetState.picking = false; c.redraw(); },
   'icon-custom'() {
@@ -1242,6 +1314,8 @@ const A = {
     for (const r of S.rules || []) if (r.icon === ref) r.icon = null;
     for (const c of S.categories) if (c.emoji === ref) c.emoji = guessEmoji(c.name);
     for (const a of S.accounts) if (a.icon === ref) a.icon = null;
+    for (const k of Object.keys(S.noteIcons || {})) if (S.noteIcons[k] === ref) delete S.noteIcons[k];
+    if (sheetState.isNote && sheetState.icon === ref) sheetState.icon = null;
     if (sheetState.icon === ref) sheetState.icon = null;
     if (sheetState.cat?.emoji === ref) sheetState.cat.emoji = guessEmoji(sheetState.cat.name);
     save(); derive(); drawIconPicker();
@@ -1265,6 +1339,26 @@ const A = {
   'cat-drill'(el) { drillTo(() => { ui.catFilter = el.dataset.id; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'note-drill'(el) { drillTo(() => { ui.noteFilter = el.dataset.note; ui.q = ''; }); },
   'donut-more'(el) { const k = el.dataset.k; ui.donutOpen.has(k) ? ui.donutOpen.delete(k) : ui.donutOpen.add(k); const y = window.scrollY; render(); window.scrollTo(0, y); },
+  'emoji-all'() { sheetState.allEmoji = true; $('#emoji-results').innerHTML = emojiResults(); },
+  'edit-note'(el) { const back = sheetState?.mode === 'edit' ? {...sheetState, cat:{...sheetState.cat}} : null; noteSheet(el.dataset.cat, el.dataset.key, back); },
+  'note-cancel'() { const b = sheetState.back; if (b) { sheetState = b; drawCatsSheet(); } else closeSheet(); },
+  'note-show'() { const d = sheetState; closeSheet(); drillTo(() => { ui.tab = 'txs'; ui.catFilter = d.catId; ui.noteFilter = d.key; ui.accFilter = null; ui.q = ''; }); },
+  'save-note'() {
+    const d = sheetState, newName = String(d.newName || '').trim(), target = d.moveTo || d.catId, oldKey = d.key, newKey = noteKey(newName);
+    if (!newName) return toast('Not boş olamaz');
+    const suffix = n => (String(n || '').match(/\s*\(\d+\/\d+\)\s*$/) || [''])[0];
+    let n = 0;
+    for (const t of S.txs) if (t.categoryId === d.catId && noteKey(t.note) === oldKey) { if (newName !== d.name) t.note = newName + suffix(t.note); t.categoryId = target; n++; }
+    for (const r of S.rules || []) if (r.categoryId === d.catId && noteKey(r.note) === oldKey) { if (newName !== d.name) r.note = newName; r.categoryId = target; }
+    S.noteIcons = S.noteIcons || {};
+    const oldIcon = `${d.catId}|${oldKey}`, newIcon = `${target}|${newKey}`;
+    delete S.noteIcons[oldIcon];
+    if (d.icon) S.noteIcons[newIcon] = d.icon;
+    save(); derive();
+    if (ui.tab === 'txs' && ui.catFilter === d.catId && ui.noteFilter === oldKey) { ui.catFilter = target; ui.noteFilter = newKey; }
+    const b = d.back; if (b) { sheetState = b; if (b.cat?.id === d.catId) drawCatsSheet(); else closeSheet(); } else closeSheet();
+    render(); toast(`${n} işlem güncellendi`);
+  },
   'clear-note'() { ui.noteFilter = null; render(); },
   'drill-txs'(el, e) { e?.preventDefault(); drillTo(() => { ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'nav-back'() { if (!ui.stack.length) return; try { history.back(); } catch { goBack(); } },
@@ -1422,6 +1516,8 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   const el = e.target;
+  if (el.id === 'emoji-q' && sheetState) { sheetState.emojiQ = el.value; $('#emoji-results').innerHTML = emojiResults(); return; }
+  if (el.id === 'note-q') { const q = el.value.trim().toLocaleLowerCase('tr'); document.querySelectorAll('#note-list .row').forEach(r => { r.style.display = r.dataset.name.includes(q) ? '' : 'none'; }); return; }
   if (el.id === 'crop-zoom' && sheetState?.crop) { cropZoomTo(sheetState.crop, +el.value); cropPaint(); return; }
   if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q ? '' : monthSwitch(); renderTxList(); return; }
   if (!sheetState) return;
@@ -1567,7 +1663,7 @@ $('#file-mm').addEventListener('change', async e => {
     const oldLink = new Map(S.categories.filter(c => 'link' in c).map(c => [c.id, c.link]));
     for (const c of data.categories) if (oldLink.has(c.id)) c.link = oldLink.get(c.id);
     for (const t of data.txs) if (oldTx.get(t.id)) t.icon = oldTx.get(t.id);
-    S = {...emptyState(), ...data, rules, loans, icons:S.icons || {}, meta:{...S.meta, ...data.meta}};
+    S = {...emptyState(), ...data, rules, loans, icons:S.icons || {}, noteIcons:S.noteIcons || {}, meta:{...S.meta, ...data.meta}};
     ensureLinks(); S.meta.linksV1 = true;
     await DB.set('state', S);
     ui.tab = 'home'; ui.month = curMonth(); render();
