@@ -63,6 +63,17 @@ header.big h1{font-size:34px;letter-spacing:-.02em;margin:0;font-weight:750}
 .backup-banner .bb-actions{display:flex;gap:8px;width:100%}
 .backup-banner .bb-actions button{flex:1;height:40px;border-radius:12px;background:var(--chip);font-weight:650;font-size:14px}
 .backup-banner .bb-actions button.on{background:var(--accent);color:#fff}
+.bbar{height:6px;border-radius:3px;background:var(--chip);margin-top:7px;position:relative}
+.bbar.big{height:10px;border-radius:5px;background:rgba(127,127,140,.22)}
+.bbar i{display:block;height:100%;border-radius:inherit;background:var(--pos)}
+.bbar.warn i{background:#F5A524} .bbar.over i{background:var(--neg)}
+.bbar em{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--text);opacity:.55;border-radius:1px}
+.warn-t{color:#D97706 !important}
+.budget-card{display:block;width:100%;text-align:left}
+.budget-card .bc-head{display:flex;justify-content:space-between;align-items:baseline}
+.budget-card .bc-head h3{margin:0}
+.budget-card .bc-head span{font-weight:700}
+.budget-card .bc-sub{font-size:13px;color:var(--muted);margin-top:4px}
 .to-today{display:flex;justify-content:center;margin:-6px 0 10px}
 .to-today button{font-size:13px;font-weight:650;color:var(--accent);background:var(--chip);padding:6px 12px;border-radius:999px}
 .mgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:6px 0 16px}
@@ -339,7 +350,7 @@ const DB = {
   async get(k) { const db = await this.open(); return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
   async set(k, v) { const db = await this.open(); return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
 };
-const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], loans:[], icons:{}, noteIcons:{}, meta:{}});
+const emptyState = () => ({version:1, accounts:[], categories:[], txs:[], rules:[], loans:[], icons:{}, noteIcons:{}, budgets:{}, meta:{}});
 
 /* ---------- icons ----------
    An icon value is either an emoji or "img:<id>", pointing at an uploaded picture in S.icons.
@@ -647,7 +658,7 @@ function monthStats(m) {
 const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, noteFilter:null, q:'', stack:[], donutOpen:new Set()};
 /* drill-down navigation: opening a category, an account or "Tümü" remembers where you came from, so the
    back button (and the edge swipe, through the browser history) returns there at the same scroll position */
-const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar'};
+const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar', budget:'Bütçe'};
 function drillTo(apply) {
   ui.stack.push({tab:ui.tab, accFilter:ui.accFilter, catFilter:ui.catFilter, noteFilter:ui.noteFilter, q:ui.q, y:window.scrollY, chartEnd:ui.chartEnd});
   ui.chartEnd = null;
@@ -755,6 +766,11 @@ VIEWS.home = () => {
   </div>
   ${donutCard('Gider dağılımı', st.cats, 'Bu dönem gider yok')}
   ${donutCard('Gelir dağılımı', st.incCats, 'Bu dönem gelir yok')}
+  ${(() => { const T = budgetTotals(ui.month), prog = periodProgress(ui.month);
+    if (!T.rows.length) return `<button class="list row" data-action="open-budget" style="margin-top:14px"><div class="ic" style="background:#4C5BFF22">🎯</div><div class="t"><b>Bütçe oluştur</b><small>Kategorilerine aylık sınır koy, gidişatı takip et</small></div>${ICON.rowChev}</button>`;
+    const left = T.b - T.s;
+    return `<button class="card budget-card" data-action="open-budget"><div class="bc-head"><h3>Bütçe</h3><span class="num ${left < 0 ? 'neg' : ''}">${left >= 0 ? `${money(left, false)} kaldı` : `${money(-left, false)} aşıldı`}</span></div>
+      <div class="bc-sub num">${money(T.s, false)} / ${money(T.b, false)}${T.over ? ` · <b class="neg">${T.over} kategori aşıldı</b>` : ''}</div>${bbar(T.s, T.b, prog, true)}</button>`; })()}
   ${homeChart()}
   <div class="sec-title">Son işlemler <a href="#" data-action="drill-txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t, null, true)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
@@ -995,6 +1011,103 @@ function renderTxList() {
   $('#txlist').innerHTML = html;
 }
 
+/* ---------- budgets ----------
+   S.budgets = {categoryId: amount per period}. A budget on a top-level category covers its subcategories too;
+   when a parent and its child both have one, the totals count only the parent so nothing is counted twice. */
+const budgetOf = id => +(S.budgets || {})[id] || 0;
+function catSpent(id, m) {
+  let v = 0;
+  for (const t of D.byMonth.get(m) || []) if (t.type === 'expense' && (t.categoryId === id || D.cat.get(t.categoryId)?.parentId === id)) v += t.amount;
+  return Math.max(0, v);
+}
+const daysBetween = (a, b) => Math.round((parseD(b) - parseD(a)) / 864e5);
+function periodProgress(m) { // share of the period already behind us: 0 for future periods, 1 for past ones
+  const [a, b] = periodRange(m), t = todayStr();
+  return t < a ? 0 : t > b ? 1 : (daysBetween(a, t) + 1) / (daysBetween(a, b) + 1);
+}
+function budgetRows(m) {
+  return Object.keys(S.budgets || {}).filter(id => D.cat.get(id) && budgetOf(id) > 0)
+    .map(id => ({c:D.cat.get(id), b:budgetOf(id), s:catSpent(id, m)}));
+}
+// end-of-period forecast for one category. Instead of a straight line (which turns a rent paid on day 1
+// into "40.000 by month end"), it asks how much of a period's spending was usually done by this day in
+// the last 6 periods and scales today's figure by that share.
+function forecast(id, m) {
+  const prog = periodProgress(m); if (prog <= 0 || prog >= 1) return null;
+  const s = catSpent(id, m), day = daysBetween(periodRange(m)[0], todayStr()), fr = [];
+  for (let i = 1; i <= 6; i++) {
+    const p = shiftMonth(m, -i), full = catSpent(id, p); if (full < 0.01) continue;
+    const lim = addDays(periodRange(p)[0], day); let by = 0;
+    for (const t of D.byMonth.get(p) || []) if (t.type === 'expense' && t.date <= lim && (t.categoryId === id || D.cat.get(t.categoryId)?.parentId === id)) by += t.amount;
+    fr.push(Math.min(1, Math.max(0, by / full)));
+  }
+  if (!fr.length) return Math.max(s, s / prog);
+  fr.sort((a, b) => a - b); const f = Math.max(0.05, fr[Math.floor(fr.length / 2)]);
+  return Math.max(s, s / f);
+}
+function budgetTotals(m) {
+  const rows = budgetRows(m), tops = rows.filter(r => !(r.c.parentId && budgetOf(r.c.parentId) > 0));
+  const fc = tops.map(r => forecast(r.c.id, m));
+  return {rows, b:tops.reduce((x, r) => x + r.b, 0), s:tops.reduce((x, r) => x + r.s, 0), over:rows.filter(r => r.s > r.b + 0.004).length,
+    proj:fc.some(v => v == null) ? null : fc.reduce((x, v) => x + v, 0)};
+}
+function avgSpent(id, n = 6) { // average of the last n periods that had spending (the current one excluded)
+  const vals = Array.from({length:n}, (_, i) => catSpent(id, shiftMonth(curMonth(), -1 - i))).filter(v => v > 0.004);
+  return vals.length ? vals.reduce((a, v) => a + v, 0) / vals.length : 0;
+}
+function bbar(s, b, prog, big) {
+  const pct = b ? s / b : 0, cls = pct > 1.0001 ? 'over' : pct >= 0.8 ? 'warn' : 'ok';
+  return `<div class="bbar ${cls} ${big ? 'big' : ''}"><i style="width:${Math.min(100, pct * 100)}%"></i>${prog > 0 && prog < 1 ? `<em style="left:${prog * 100}%" title="Dönemin geçen kısmı"></em>` : ''}</div>`;
+}
+const catLabel = c => c.parentId && D.cat.get(c.parentId) ? `${D.cat.get(c.parentId).name} › ${c.name}` : c.name;
+VIEWS.budget = () => {
+  const m = ui.month, prog = periodProgress(m), T = budgetTotals(m);
+  let html = `<header class="big"><div>${backBtn()}<h1>Bütçe</h1></div><button class="icon-btn" data-action="add-budget" aria-label="Bütçe ekle">${ICON.plus}</button></header>${monthSwitch()}`;
+  if (!T.rows.length) return html + `<div class="empty"><div class="big">🎯</div><p>Kategorilerine aylık bütçe koy; ne kadar harcadığını, ne kadar kaldığını ve bu hızla dönem sonunda nereye varacağını gör.</p><button class="primary" data-action="add-budget">İlk bütçeyi ekle</button></div>` + unbudgeted(m);
+  const left = T.b - T.s, proj = T.proj;
+  html += `<section class="hero" style="padding:18px 20px"><div class="label">${prog >= 1 ? 'Dönem sonu' : prog <= 0 ? 'Henüz başlamadı' : `Dönemin %${Math.round(prog * 100)}'i geçti`}</div>
+    <div class="big-amt num" style="margin-bottom:6px">${money(T.s, false)} <small>/ ${money(T.b, false)}</small></div>
+    ${bbar(T.s, T.b, prog, true)}
+    <div class="hero-row" style="margin-top:14px"><div><span>${left >= 0 ? 'Kalan' : 'Aşılan'}</span><b class="num">${money(Math.abs(left), false)}</b></div>
+      <div><span>${proj != null ? 'Dönem sonu tahmini' : 'Aşılan kategori'}</span><b class="num">${proj != null ? money(proj, false) : T.over}</b></div></div>
+    ${proj != null && proj > T.b ? `<div class="label" style="margin-top:10px">Alışkanlıklarına göre bütçeyi yaklaşık ${money(proj - T.b, false)} aşabilirsin.</div>` : ''}${T.over ? `<div class="label" style="margin-top:6px">${T.over} kategoride bütçe aşıldı.</div>` : ''}</section>`;
+  const rows = T.rows.sort((x, y) => y.s / y.b - x.s / x.b);
+  html += `<div class="sec-title">Kategoriler<small>${rows.length} bütçe</small></div><div class="list">${rows.map(r => { const l = r.b - r.s, tc = topCat(r.c.id), col = tc?.color || '#64748B';
+    const fcv = r.s <= r.b ? forecast(r.c.id, m) : null, pr = fcv != null && fcv > r.b * 1.02 ? ` · tahmin ${money(fcv, false)}` : '';
+    return `<button class="row brow" data-action="edit-budget" data-id="${r.c.id}"><div class="ic" style="background:${col}22;color:${col}">${ico(r.c.emoji || tc?.emoji)}</div>
+      <div class="t"><b>${esc(catLabel(r.c))}</b><small class="${pr ? 'warn-t' : ''}">${money(r.s, false)} / ${money(r.b, false)}${pr}</small>${bbar(r.s, r.b, prog)}</div>
+      <div class="a num ${l < -0.004 ? 'neg' : ''}">${money(Math.abs(l), false)}<small>${l < -0.004 ? 'aşıldı' : 'kalan'}</small></div></button>`; }).join('')}</div>
+    <p class="note">Çubuktaki ince çizgi dönemin ne kadarının geçtiğini gösterir; dolu kısım çizginin önündeyse harcama hızın bütçeden hızlı demektir.</p>`;
+  return html + unbudgeted(m);
+};
+function unbudgeted(m) { // top-level expense categories with spending but no budget on them or their subcategories
+  const covered = new Set(Object.keys(S.budgets || {}).filter(id => budgetOf(id) > 0).flatMap(id => [id, D.cat.get(id)?.parentId]));
+  const st = monthStats(m), list = [...st.cats.entries()].filter(([id, v]) => v > 0.004 && D.cat.get(id) && !covered.has(id)).sort((a, b) => b[1] - a[1]);
+  if (!list.length) return '';
+  return `<div class="sec-title">Bütçesi olmayan harcamalar</div><div class="list">${list.map(([id, v]) => { const c = D.cat.get(id);
+    return `<button class="row" data-action="add-budget" data-id="${id}"><div class="ic" style="background:${(c.color || '#64748B')}22">${ico(c.emoji)}</div>
+      <div class="t"><b>${esc(c.name)}</b><small>Bu dönem ${money(v, false)}</small></div><span class="pay-btn" style="pointer-events:none">+ Bütçe</span></button>`; }).join('')}</div>`;
+}
+function budgetSheet(id) {
+  const ex = id && budgetOf(id) > 0;
+  sheetState = {isBudget:true, isNew:!ex, id:id || '', amountStr:ex ? String(budgetOf(id)).replace('.', ',') : ''};
+  drawBudgetSheet();
+}
+function drawBudgetSheet() {
+  const d = sheetState, c = D.cat.get(d.id), avg = d.id ? avgSpent(d.id) : 0, now = d.id ? catSpent(d.id, ui.month) : 0;
+  const opts = S.categories.filter(x => x.kind === 'expense' && !x.hidden && (!budgetOf(x.id) || x.id === d.id)).sort((a, b) => catLabel(a).localeCompare(catLabel(b), 'tr'));
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isNew ? 'Yeni bütçe' : 'Bütçe'}</h2><button data-action="save-budget" style="font-weight:700">Kaydet</button></div>
+    <div class="amount"><input id="f-amt" data-f="amountStr" inputmode="decimal" placeholder="0" value="${esc(d.amountStr)}" autocomplete="off"><span>₺</span></div>
+    <div class="form">${d.isNew ? `<div class="field"><label>Kategori</label><select data-f="id"><option value="">Seç</option>${opts.map(x => `<option value="${x.id}" ${x.id === d.id ? 'selected' : ''}>${esc(catLabel(x))}</option>`).join('')}</select></div>`
+      : `<div class="field"><label>Kategori</label><span style="flex:1;text-align:right">${esc(c ? catLabel(c) : '')}</span></div>`}</div>
+    ${d.id ? `<div class="card" style="margin-top:0"><div class="cat-meta" style="margin:0"><span>${esc(monthLabel(ui.month))}<b class="num">${money(now, false)}</b></span><span>Son 6 dönem ort.<b class="num">${avg ? money(avg, false) : '—'}</b></span><span>${c?.parentId ? 'Alt kategori' : 'Alt kategoriler'}<b style="font-size:13px">${c?.parentId ? 'tek' : 'dahil'}</b></span></div>
+      ${avg ? `<button class="secondary" data-action="budget-use-avg" style="margin-top:12px">Ortalamayı kullan · ${money(Math.ceil(avg / 50) * 50, false)}</button>` : ''}</div>` : ''}
+    <p class="note">Bütçe her dönem için geçerli olan aylık sınırdır. Ana kategoriye koyduğun bütçe alt kategorilerinin harcamalarını da kapsar.</p>
+    ${d.id && !d.isNew ? `<button class="secondary" data-action="budget-show">Bu kategorinin işlemlerini göster</button><button class="secondary danger" data-action="del-budget">Bütçeyi kaldır</button>` : ''}`);
+  sizeAmt();
+}
+
 VIEWS.recurring = () => {
   const rules = (S.rules || []).slice().sort((a, b) => a.nextDate.localeCompare(b.nextDate));
   const pend = pendingRules(), pendIds = new Set(pend.map(r => r.id));
@@ -1034,6 +1147,7 @@ VIEWS.settings = () => {
   </div>
   <div class="sec-title">Düzenle</div>
   <div class="list">
+    <button class="row" data-action="open-budget"><div class="ic" style="background:#4C5BFF22">🎯</div><div class="t"><b>Bütçe</b><small>${budgetRows(ui.month).length ? `${budgetRows(ui.month).length} kategori bütçeli` : 'Kategori başına aylık sınır'}</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="tab" data-tab="recurring"><div class="ic" style="background:#12A26B22">🔁</div><div class="t"><b>Tekrarlayan işlemler</b><small>${(S.rules || []).filter(ruleActive).length} aktif${pendingRules().length ? ` · ${pendingRules().length} onay bekliyor` : ''}</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="period"><div class="ic" style="background:#0EA5E922">📅</div><div class="t"><b>Dönem başlangıç günü</b><small>${periodDay() === 1 ? 'Takvim ayı (her ayın 1. günü)' : `Her ayın ${periodDay()}. günü yeni dönem başlar`}</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="manage-cats"><div class="ic" style="background:#8E4EC622">🏷️</div><div class="t"><b>Kategoriler</b><small>Ekle, yeniden adlandır, gizle</small></div>${ICON.rowChev}</button>
@@ -1441,6 +1555,18 @@ const A = {
     const b = d.back; if (b) { sheetState = b; if (b.cat?.id === d.catId) drawCatsSheet(); else closeSheet(); } else closeSheet();
     render(); toast(`${n} işlem güncellendi`);
   },
+  'open-budget'(el, e) { e?.preventDefault(); drillTo(() => { ui.tab = 'budget'; ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; }); },
+  'add-budget'(el) { budgetSheet(el?.dataset?.id || ''); if (el?.dataset?.id) sheetState.isNew = true; drawBudgetSheet(); },
+  'edit-budget'(el) { budgetSheet(el.dataset.id); },
+  'budget-use-avg'() { sheetState.amountStr = String(Math.ceil(avgSpent(sheetState.id) / 50) * 50); drawBudgetSheet(); },
+  'save-budget'() {
+    const d = sheetState, v = parseAmount(d.amountStr);
+    if (!d.id) return toast('Kategori seç');
+    if (!(v > 0)) return toast('Bütçe tutarını gir');
+    S.budgets = S.budgets || {}; S.budgets[d.id] = v; save(); closeSheet(); render(); toast('Bütçe kaydedildi');
+  },
+  'del-budget'() { if (!confirm('Bu kategorinin bütçesi kaldırılsın mı?')) return; delete S.budgets[sheetState.id]; save(); closeSheet(); render(); toast('Bütçe kaldırıldı'); },
+  'budget-show'() { const id = sheetState.id; closeSheet(); drillTo(() => { ui.tab = 'txs'; ui.catFilter = id; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; }); },
   'backup-later'() { S.meta.backupSnooze = Date.now(); save(); render(); },
   async 'ask-persist'() { const ok = await askPersist(); toast(ok ? 'Kalıcı depolama açıldı' : 'Tarayıcı izin vermedi; uygulamayı ana ekrandan açınca tekrar dene'); fillStorageInfo(); },
   'clear-note'() { ui.noteFilter = null; render(); },
@@ -1617,6 +1743,7 @@ document.addEventListener('change', e => {
     sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value;
     if (el.dataset.redraw) drawAccSheet();
     if (sheetState.isPeriod) drawPeriodSheet();
+    if (sheetState.isBudget && el.dataset.f === 'id') drawBudgetSheet();
     if (el.dataset.redrawTx) drawTxSheet();
     if (el.dataset.f === 'accountId' && sheetState.type === 'transfer') drawTxSheet();
   }
@@ -1778,7 +1905,7 @@ $('#file-mm').addEventListener('change', async e => {
     const oldLink = new Map(S.categories.filter(c => 'link' in c).map(c => [c.id, c.link]));
     for (const c of data.categories) if (oldLink.has(c.id)) c.link = oldLink.get(c.id);
     for (const t of data.txs) if (oldTx.get(t.id)) t.icon = oldTx.get(t.id);
-    S = {...emptyState(), ...data, rules, loans, icons:S.icons || {}, noteIcons:S.noteIcons || {}, meta:{...S.meta, ...data.meta}};
+    S = {...emptyState(), ...data, rules, loans, icons:S.icons || {}, noteIcons:S.noteIcons || {}, budgets:S.budgets || {}, meta:{...S.meta, ...data.meta}};
     ensureLinks(); S.meta.linksV1 = true;
     await DB.set('state', S);
     ui.tab = 'home'; ui.month = curMonth(); render();
