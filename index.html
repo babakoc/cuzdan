@@ -610,7 +610,21 @@ function monthStats(m) {
 }
 
 /* ---------- ui state ---------- */
-const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, q:''};
+const ui = {tab:'home', month:curMonth(), accFilter:null, catFilter:null, q:'', stack:[]};
+/* drill-down navigation: opening a category, an account or "Tümü" remembers where you came from, so the
+   back button (and the edge swipe, through the browser history) returns there at the same scroll position */
+const TAB_NAMES = {home:'Özet', accounts:'Hesaplar', txs:'İşlemler', settings:'Ayarlar', recurring:'Tekrarlayanlar'};
+function drillTo(apply) {
+  ui.stack.push({tab:ui.tab, accFilter:ui.accFilter, catFilter:ui.catFilter, q:ui.q, y:window.scrollY});
+  try { history.pushState({cz:ui.stack.length}, ''); } catch {}
+  apply(); render(); window.scrollTo(0, 0);
+}
+function goBack() {
+  const f = ui.stack.pop(); if (!f) return;
+  Object.assign(ui, {tab:f.tab, accFilter:f.accFilter, catFilter:f.catFilter, q:f.q});
+  render(); window.scrollTo(0, f.y); setTimeout(() => window.scrollTo(0, f.y), 30); // again once images/fonts settle
+}
+const backBtn = () => ui.stack.length ? `<button class="back" data-action="nav-back">${ICON.chevL}${TAB_NAMES[ui.stack[ui.stack.length - 1].tab] || 'Geri'}</button>` : '';
 function render() {
   derive();
   document.querySelectorAll('nav.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
@@ -705,7 +719,7 @@ VIEWS.home = () => {
       <span class="mn num ${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${money(Math.abs(d), false)}<small>fark</small></span></button>`; }).join('')}</div>
     <div class="bar-legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span><span style="margin-left:auto">Döneme dokun, o döneme geç</span></div>
   </section>
-  <div class="sec-title">Son işlemler <a href="#" data-action="tab" data-tab="txs">Tümü</a></div>
+  <div class="sec-title">Son işlemler <a href="#" data-action="drill-txs">Tümü</a></div>
   ${recent.length ? `<div class="list">${recent.map(t => txRow(t, null, true)).join('')}</div>` : '<div class="empty">Bu ay işlem yok</div>'}`;
 };
 
@@ -774,7 +788,7 @@ VIEWS.accounts = () => {
 
 VIEWS.txs = () => {
   const a = ui.accFilter && D.acc.get(ui.accFilter), c = ui.catFilter && D.cat.get(ui.catFilter);
-  return `<header class="big"><h1>${a ? esc(a.name) : 'İşlemler'}</h1>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
+  return `<header class="big"><div>${backBtn()}<h1>${a ? esc(a.name) : 'İşlemler'}</h1></div>${a ? `<button class="icon-btn" data-action="edit-acc" data-id="${a.id}" aria-label="Hesabı düzenle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>` : ''}</header>
   ${a ? accHero(a) : ''}
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)}${c.link ? ' · gelir + gider' : ''} ✕</button>` : ''}</div>` : ''}
@@ -1212,10 +1226,12 @@ const A = {
     Object.assign(sheetState, {type:'transfer', accountId:from || sheetState.accountId, toAccountId:a.id, amount:String(amt).replace('.', ','), note:`${a.name} ekstre ödemesi`, categoryId:null, catParent:null});
     drawTxSheet();
   },
-  tab(el, e) { e?.preventDefault(); if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
+  tab(el, e) { e?.preventDefault(); if (el.closest('nav.tabs')) ui.stack = []; if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
   month(el) { ui.month = shiftMonth(ui.month, +el.dataset.d); render(); },
   'goto-month'(el) { ui.month = el.dataset.m; render(); },
-  'cat-drill'(el) { ui.catFilter = el.dataset.id; ui.accFilter = null; ui.tab = 'txs'; render(); window.scrollTo(0, 0); },
+  'cat-drill'(el) { drillTo(() => { ui.catFilter = el.dataset.id; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
+  'drill-txs'(el, e) { e?.preventDefault(); drillTo(() => { ui.catFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
+  'nav-back'() { if (!ui.stack.length) return; try { history.back(); } catch { goBack(); } },
   'add-loan'() { if (!S.accounts.length) return toast('Önce bir hesap ekle'); loanSheet(); },
   'open-loan'(el) { sheetState = {isLoanDetail:true, id:el.dataset.id}; drawLoanDetail(); },
   'edit-loan'() { loanSheet(S.loans.find(x => x.id === sheetState.id)); },
@@ -1252,7 +1268,7 @@ const A = {
     S.txs = S.txs.filter(t => t.loanId !== sheetState.id); S.loans = S.loans.filter(x => x.id !== sheetState.id);
     save(); closeSheet(); render(); toast('Kredi silindi');
   },
-  'open-acc'(el) { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.tab = 'txs'; ui.q = ''; render(); window.scrollTo(0, 0); },
+  'open-acc'(el) { if (sheetState) closeSheet(); drillTo(() => { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'clear-acc'() { ui.accFilter = null; render(); },
   'clear-cat'() { ui.catFilter = null; render(); },
   'close-sheet': closeSheet,
@@ -1523,6 +1539,9 @@ $('#file-mm').addEventListener('change', async e => {
   } catch (err) { console.error(err); toast('Aktarılamadı: ' + err.message); }
   finally { $('#loading').classList.remove('on'); }
 });
+
+try { history.scrollRestoration = 'manual'; } catch {} // goBack restores the scroll position itself
+window.addEventListener('popstate', () => { if (sheetState) closeSheet(); goBack(); });
 
 /* ---------- boot ---------- */
 (async () => {
