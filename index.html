@@ -726,8 +726,8 @@ function derive() {
   for (const t of S.txs) { const k = periodKey(t.date); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
   for (const l of byMonth.values()) l.sort(txSort);
   // what spending totals read (Özet, dağılım, kategori grafikleri, bütçe): provizyon stays out until it is posted,
-  // a planned (future-dated) transaction until its day comes
-  const stat = new Map([...byMonth].map(([k, l]) => [k, l.filter(t => !t.prov && t.date <= today)]));
+  // a recurring one (subscription) dated in the future until its day comes. Other future-dated ones (installments) count in their period.
+  const stat = new Map([...byMonth].map(([k, l]) => [k, l.filter(t => !t.prov && !(t.recurringId && t.date > today))]));
   let assets = 0, debts = 0;
   for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
   // Loans weigh on net worth only by the installments due up to the end of the current period (overdue included),
@@ -744,11 +744,13 @@ const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.ge
 const catPath = id => { const c = D.cat.get(id); if (!c) return 'Kategorisiz'; const p = c.parentId && D.cat.get(c.parentId); return p ? `${p.name} › ${c.name}` : c.name; };
 const accName = id => { const a = D.acc.get(id); return !a ? 'Silinmiş hesap' : a.deleted ? `${a.name} (silinmiş)` : a.name; };
 /* ---------- credit card cycle ---------- */
-// sure: of what lies after today, count only card installments (already charged, billed later), not planned ones
+// a recurring transaction dated after today has not happened yet: it stays out of totals and the next statement
+const isPlanned = t => !!t.recurringId && t.date > D.today;
+// sure: leave out planned (recurring, future) ones
 function balAt(id, date, sure) {
   let v = +(D.acc.get(id)?.opening) || 0;
   for (const t of S.txs) {
-    if (t.date > date || t.prov || (sure && t.date > D.today && !t.instGroup)) continue;
+    if (t.date > date || t.prov || (sure && isPlanned(t))) continue;
     if (t.accountId === id) v += (t.type === 'income' || t.type === 'adjust') ? t.amount : -t.amount;
     if (t.type === 'transfer' && t.toAccountId === id) v += t.amount;
   }
@@ -1013,7 +1015,7 @@ function txRow(t, ctxAcc, withDate) {
     amt = (v >= 0 ? '+' : '−') + money(Math.abs(v)); cls = v >= 0 ? 'pos' : '';
   }
   // provizyon: its own status line (a badge next to a long title gets cut off), a dimmed amount and an orange edge
-  const planned = (t.prov ? '' : t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
+  const planned = (t.prov ? '' : isPlanned(t) ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row${t.prov ? ' prov' : ''}" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
     <div class="t"><b>${esc(title)}${planned}</b>${t.prov ? `<small class="prov-tag">${ICON.clock}Provizyonda</small>` : ''}${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
@@ -1281,7 +1283,7 @@ function catSeries(c, m) {
 /* money moving in and out of one account. Card payments are transfers, so for an account (and above all
    a credit card) "income/expense" is the wrong lens: what matters is what came in and what went out. */
 function flowOf(t, id) {
-  if (t.v || t.prov || t.date > D.today) return [0, 0]; // only what has actually happened
+  if (t.v || t.prov || isPlanned(t)) return [0, 0];
   if (t.type === 'transfer') return [t.toAccountId === id ? t.amount : 0, t.accountId === id ? t.amount : 0];
   if (t.accountId !== id) return [0, 0];
   if (t.type === 'income') return t.amount >= 0 ? [t.amount, 0] : [0, -t.amount];
@@ -1405,13 +1407,13 @@ function renderTxList() {
   if (ui.catFilter || ui.noteFilter != null) list = list.filter(filterMatch);
   let sum = '';
   if (lk) {
-    let inn = 0, out = 0; for (const t of list) { if (t.v || t.prov || t.date > D.today) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
+    let inn = 0, out = 0; for (const t of list) { if (t.v || t.prov || isPlanned(t)) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
     sum = `<div class="link-sum"><span>Gelen<b class="num pos">+${money(inn, false)}</b></span><span>Giden<b class="num neg">−${money(out, false)}</b></span><span>Net<b class="num ${inn - out >= 0 ? 'pos' : 'neg'}">${inn - out >= 0 ? '+' : '−'}${money(Math.abs(inn - out), false)}</b></span></div>`;
   } else if (ui.accFilter && !ui.catFilter) {
     const W = flowWords(D.acc.get(ui.accFilter)), f = accFlow(ui.accFilter, list), net = f.inn - f.out;
     sum = `<div class="link-sum"><span>${W.out}<b class="num neg">${money(f.out, false)}</b></span><span>${W.in}<b class="num pos">${money(f.inn, false)}</b></span><span>Net<b class="num ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${money(Math.abs(net), false)}</b></span></div>`;
   } else if (!ui.catFilter) { // income / expense / difference of what the list shows (whole period, or a search)
-    let inc = 0, exp = 0; for (const t of list) { if (t.v || t.prov || t.date > D.today) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
+    let inc = 0, exp = 0; for (const t of list) { if (t.v || t.prov || isPlanned(t)) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
     sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
   if (provList.length) sum = `<div class="sec-title">Provizyonda<small class="num">${money(provList.reduce((s, t) => s + t.amount, 0), false)}</small></div>
@@ -1424,7 +1426,7 @@ function renderTxList() {
   let html = sum, day = null, buf = [];
   const flush = () => {
     if (!buf.length) return;
-    const net = buf.reduce((s, t) => s + (t.v || t.prov || t.date > D.today ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
+    const net = buf.reduce((s, t) => s + (t.v || t.prov || isPlanned(t) ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
     html += `<div class="day"><span>${dayLabel(day)}</span><span class="num">${net ? (net > 0 ? '+' : '−') + money(Math.abs(net)) : ''}</span></div><div class="list">${buf.map(t => t.v ? vRow(t, ui.accFilter) + ruleAsk(t) : txRow(t, ui.accFilter)).join('')}</div>`;
     buf = [];
   };
