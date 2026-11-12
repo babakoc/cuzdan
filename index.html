@@ -325,6 +325,7 @@ html.ax .dist .n,html.ax .flow-top b{white-space:normal}
 .row.upcoming .ic{outline:1.5px dashed currentColor;outline-offset:-1.5px}
 .prov-row{display:flex;align-items:center;gap:8px;padding-right:14px}.prov-row>.row{flex:1;min-width:0;padding-right:4px}
 .prov-row .pay-btn{flex:none}
+.sum-note{margin-top:-4px}
 .prov-all b{color:var(--accent);font-weight:600}
 .row.prov{box-shadow:inset 4px 0 0 var(--warn-fill)}
 .row.prov .ic{opacity:.6}
@@ -715,7 +716,7 @@ function derive() {
   const future = new Map(), prov = new Map();
   const add = (m, id, v) => m.set(id, (m.get(id) || 0) + v);
   for (const t of S.txs) {
-    if (t.prov) { add(prov, t.accountId, t.amount); continue; } // provizyon: not on the card's balance until posted
+    if (t.prov) add(prov, t.accountId, t.amount); // provizyon is spent money: in the balance; D.prov lets us show the bank's figure (without it) too
     const m = t.date > today ? future : bal;
     if (t.type === 'expense') add(m, t.accountId, -t.amount);
     else if (t.type === 'income') add(m, t.accountId, t.amount);
@@ -725,9 +726,9 @@ function derive() {
   const byMonth = new Map();
   for (const t of S.txs) { const k = periodKey(t.date); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
   for (const l of byMonth.values()) l.sort(txSort);
-  // what spending totals read (Özet, dağılım, kategori grafikleri, bütçe): provizyon stays out until it is posted,
+  // what spending totals read (Özet, dağılım, kategori grafikleri, bütçe): provizyon counts (it is spent),
   // a recurring one (subscription) dated in the future until its day comes. Other future-dated ones (installments) count in their period.
-  const stat = new Map([...byMonth].map(([k, l]) => [k, l.filter(t => !t.prov && !(t.recurringId && t.date > today))]));
+  const stat = new Map([...byMonth].map(([k, l]) => [k, l.filter(t => !(t.recurringId && t.date > today))]));
   let assets = 0, debts = 0;
   for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
   // Loans weigh on net worth only by the installments due up to the end of the current period (overdue included),
@@ -745,6 +746,8 @@ const catPath = id => { const c = D.cat.get(id); if (!c) return 'Kategorisiz'; c
 const accName = id => { const a = D.acc.get(id); return !a ? 'Silinmiş hesap' : a.deleted ? `${a.name} (silinmiş)` : a.name; };
 /* ---------- credit card cycle ---------- */
 // a recurring transaction dated after today has not happened yet: it stays out of totals and the next statement
+// what the bank shows: the balance without provizyon (card provizyon is spending, so adding it back)
+const bankBal = id => (D.bal.get(id) || 0) + (D.prov.get(id) || 0);
 const isPlanned = t => !!t.recurringId && t.date > D.today;
 // sure: leave out planned (recurring, future) ones
 function balAt(id, date, sure) {
@@ -1208,7 +1211,7 @@ VIEWS.accounts = () => {
     if (a.type === 'bank') sub = 'Banka hesabı';
     const bank = a.type === 'card' && a.parentId ? S.accounts.find(x => x.id === a.parentId && !x.deleted) : null;
     if (bank) sub = `${bank.name} · ${sub}`;
-    if (D.prov.get(a.id)) sub += ` · ${money(D.prov.get(a.id), false)} provizyonda`;
+    if (D.prov.get(a.id)) sub += ` · ${money(D.prov.get(a.id), false)} provizyonda · bankada ${money(bankBal(a.id))}`;
     const meter = a.type === 'card' && a.limit ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -v / a.limit * 100))}%"></i></div>` : '';
     return `<button class="row ${nested ? 'nested' : ''}" data-action="open-acc" data-id="${a.id}">
       <div class="ic" style="background:${color}22;color:${color}">${ico(a.icon || ACC_ICON[a.type] || '👛')}</div>
@@ -1283,7 +1286,7 @@ function catSeries(c, m) {
 /* money moving in and out of one account. Card payments are transfers, so for an account (and above all
    a credit card) "income/expense" is the wrong lens: what matters is what came in and what went out. */
 function flowOf(t, id) {
-  if (t.v || t.prov || isPlanned(t)) return [0, 0];
+  if (t.v || isPlanned(t)) return [0, 0];
   if (t.type === 'transfer') return [t.toAccountId === id ? t.amount : 0, t.accountId === id ? t.amount : 0];
   if (t.accountId !== id) return [0, 0];
   if (t.type === 'income') return t.amount >= 0 ? [t.amount, 0] : [0, -t.amount];
@@ -1297,7 +1300,7 @@ function accCharts(a) {
   if (!ui.chartEnd) ui.chartEnd = ui.month;
   if (ui.month > ui.chartEnd) ui.chartEnd = ui.month; else if (ui.month < shiftMonth(ui.chartEnd, -11)) ui.chartEnd = shiftMonth(ui.month, 11);
   const end = ui.chartEnd, start = shiftMonth(end, -11);
-  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, viewTxs(m).filter(t => !t.prov))}));
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, viewTxs(m))}));
   const maxV = Math.max(1, ...ser.map(x => Math.max(x.inn, x.out)));
   const act = ser.filter(x => x.inn > 0.004 || x.out > 0.004), n = act.length || 1;
   const ai = act.reduce((s, x) => s + x.inn, 0) / n, ao = act.reduce((s, x) => s + x.out, 0) / n;
@@ -1374,7 +1377,10 @@ function catCharts(c) {
 }
 function accHero(a) {
   const bal = D.bal.get(a.id) || 0, fut = D.future.get(a.id) || 0, isCard = a.type === 'card';
-  let h = `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye</div><div class="big-amt num" style="margin-bottom:${isCard || fut ? '12px' : '0'}">${money(bal)}</div>`;
+  let h = `<section class="hero" style="padding:18px 20px"><div class="label">Güncel bakiye${D.prov.get(a.id) ? ' · provizyon dahil' : ''}</div><div class="big-amt num" style="margin-bottom:${isCard || fut || D.prov.get(a.id) ? '12px' : '0'}">${money(bal)}</div>`;
+  if (D.prov.get(a.id)) h += `<div class="hero-row" style="margin-bottom:${isCard ? 8 : 0}px">
+    <div><span>Bankada görünen</span><b class="num">${money(bankBal(a.id))}</b><span>Provizyon hariç</span></div>
+    <div><span>Provizyonda</span><b class="num">${money(D.prov.get(a.id))}</b><span>Harcandı, banka henüz işlemedi</span></div></div>`;
   if (isCard) {
     const c = cardCycle(a);
     if (c) {
@@ -1382,11 +1388,10 @@ function accHero(a) {
       const st = c.dueNow <= 0.004 ? (c.statement > 0.004 ? '✓ Ödendi' : 'Borç yok') : relDay(c.due);
       h += `<div class="hero-row">
         <div><span>Bu dönem ödenecek</span><b class="num">${money(c.dueNow)}</b><span>Son ödeme ${shortDate(c.due)} · <em class="${late ? 'late' : ''}">${st}</em></span></div>
-        <div><span>Gelecek ekstre</span><b class="num">${money(c.next)}</b><span>Kesim ${shortDate(c.nextClose)} · Ödeme ${shortDate(c.nextDue)}</span></div></div>`;
+        <div><span>Gelecek ekstre</span><b class="num">${money(c.next)}</b><span>Kesim ${shortDate(c.nextClose)} · Ödeme ${shortDate(c.nextDue)}${D.prov.get(a.id) ? ' · provizyon hariç' : ''}</span></div></div>`;
       if (c.dueNow > 0.004) h += `<button class="hero-btn" data-action="pay-card" data-id="${a.id}" data-amt="${c.dueNow}">Borcu öde</button>`;
     } else h += `<button class="hero-hint" data-action="edit-acc" data-id="${a.id}">Kesim ve son ödeme günlerini ekle →</button>`;
     if (fut) h += `<div class="label" style="margin-top:12px">Gelecek taksitler toplamı: ${money(Math.abs(fut))}</div>`;
-    if (D.prov.get(a.id)) h += `<div class="label" style="margin-top:${fut ? 4 : 12}px">Provizyonda: ${money(D.prov.get(a.id))} · bakiyeye dahil değil</div>`;
   } else if (fut) h += `<div class="label">Planlı işlemler: ${money(fut)}</div>`;
   return h + '</section>';
 }
@@ -1401,32 +1406,35 @@ function renderTxList() {
   } else list = [...viewTxs(ui.month), ...upcomingIn(ui.month, viewRange(ui.month))].sort(txSort);
   if (ui.accFilter) list = list.filter(t => t.accountId === ui.accFilter || t.toAccountId === ui.accFilter);
   const provList = ui.accFilter && !q && !ui.catFilter && ui.noteFilter == null ? S.txs.filter(t => t.prov && t.accountId === ui.accFilter).sort(txSort) : [];
+  const withProv = list; // sums count provizyon; the provizyon rows themselves are listed apart, above
   if (provList.length) list = list.filter(t => !t.prov);
   // a linked category (Kredi, Yatırım, Borç) shows its income and expense side together, with the net
   const lk = ui.catFilter && linkOf(ui.catFilter);
   if (ui.catFilter || ui.noteFilter != null) list = list.filter(filterMatch);
   let sum = '';
   if (lk) {
-    let inn = 0, out = 0; for (const t of list) { if (t.v || t.prov || isPlanned(t)) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
+    let inn = 0, out = 0; for (const t of list) { if (t.v || isPlanned(t)) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
     sum = `<div class="link-sum"><span>Gelen<b class="num pos">+${money(inn, false)}</b></span><span>Giden<b class="num neg">−${money(out, false)}</b></span><span>Net<b class="num ${inn - out >= 0 ? 'pos' : 'neg'}">${inn - out >= 0 ? '+' : '−'}${money(Math.abs(inn - out), false)}</b></span></div>`;
   } else if (ui.accFilter && !ui.catFilter) {
-    const W = flowWords(D.acc.get(ui.accFilter)), f = accFlow(ui.accFilter, list), net = f.inn - f.out;
-    sum = `<div class="link-sum"><span>${W.out}<b class="num neg">${money(f.out, false)}</b></span><span>${W.in}<b class="num pos">${money(f.inn, false)}</b></span><span>Net<b class="num ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${money(Math.abs(net), false)}</b></span></div>`;
+    const W = flowWords(D.acc.get(ui.accFilter)), f = accFlow(ui.accFilter, withProv), net = f.inn - f.out;
+    const pv = withProv.filter(t => t.prov), fx = pv.length && accFlow(ui.accFilter, withProv.filter(t => !t.prov));
+    const sx = fx ? `<p class="note sum-note">Provizyon dahil. Bankada görünen (hariç): ${W.out.toLocaleLowerCase('tr')} ${money(fx.out, false)} · net ${fx.inn - fx.out >= 0 ? '+' : '−'}${money(Math.abs(fx.inn - fx.out), false)}</p>` : '';
+    sum = `<div class="link-sum"><span>${W.out}<b class="num neg">${money(f.out, false)}</b></span><span>${W.in}<b class="num pos">${money(f.inn, false)}</b></span><span>Net<b class="num ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${money(Math.abs(net), false)}</b></span></div>` + sx;
   } else if (!ui.catFilter) { // income / expense / difference of what the list shows (whole period, or a search)
-    let inc = 0, exp = 0; for (const t of list) { if (t.v || t.prov || isPlanned(t)) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
+    let inc = 0, exp = 0; for (const t of list) { if (t.v || isPlanned(t)) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
     sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
   if (provList.length) sum = `<div class="sec-title">Provizyonda<small class="num">${money(provList.reduce((s, t) => s + t.amount, 0), false)}</small></div>
     <div class="list prov-list">${provList.map(t => `<div class="prov-row">${txRow(t, ui.accFilter, true)}<button class="pay-btn" data-action="prov-post" data-id="${t.id}" aria-label="${esc(t.note || D.cat.get(t.categoryId)?.name || 'İşlem')} geçmişe düşür">Düşür</button></div>`).join('')}
     ${provList.length > 1 ? `<button class="row prov-all" data-action="prov-post-all"><div class="t"><b>Tümünü geçmişe düşür</b></div></button>` : ''}</div>
-    <p class="note">Provizyondaki harcamalar kart bakiyesine ve ekstreye eklenmez. Banka işlemi kesinleştirince "Düşür" de; harcama kendi tarihiyle geçmişe geçer.</p>` + sum;
+    <p class="note">Provizyondaki harcamalar Cüzdan'daki bakiyeye ve toplamlara dahildir; bankanın gösterdiği bakiyede ve ekstrede henüz yoktur. Banka işlemi kesinleştirince "Düşür" de; harcama kendi tarihiyle geçmişe geçer.</p>` + sum;
   const total = list.length; list = list.slice(0, 400);
   if (!list.length && provList.length) { $('#txlist').innerHTML = sum; return; }
   if (!list.length) { $('#txlist').innerHTML = sum + `<div class="empty"><div class="big">${ICON.receipt}</div>İşlem bulunamadı</div>`; return; }
   let html = sum, day = null, buf = [];
   const flush = () => {
     if (!buf.length) return;
-    const net = buf.reduce((s, t) => s + (t.v || t.prov || isPlanned(t) ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
+    const net = buf.reduce((s, t) => s + (t.v || isPlanned(t) ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
     html += `<div class="day"><span>${dayLabel(day)}</span><span class="num">${net ? (net > 0 ? '+' : '−') + money(Math.abs(net)) : ''}</span></div><div class="list">${buf.map(t => t.v ? vRow(t, ui.accFilter) + ruleAsk(t) : txRow(t, ui.accFilter)).join('')}</div>`;
     buf = [];
   };
@@ -1813,7 +1821,7 @@ function drawTxWizard() {
     body = `<div class="form"><div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı" autocomplete="off" enterkeyhint="done"></div></div>
       <div class="note-sugs" id="note-sugs">${noteSugHTML(d)}</div>
       <div class="form">
-        ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Kart borcuna henüz eklenmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
+        ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
         ${plan && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="instN" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.instN === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
         ${!(+d.instN > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat" data-redraw-tx="1"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
         ${back.length ? `<div class="field"><label>Geçmişi doldur</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">${back.length} işlem eklenir</span><input type="checkbox" data-f="backfill" data-redraw-tx="1" ${d.backfill !== false ? 'checked' : ''}></div>` : ''}
@@ -1855,7 +1863,7 @@ function drawTxSheet() {
     <div class="amount">${d.type !== 'transfer' && !d.isRule ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
     <div class="form">
       <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId" data-redraw-tx="1">${accOptions(d.accountId)}</select></div>
-      ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Kart borcuna henüz eklenmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
+      ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
       ${d.type === 'transfer' ? `<div class="field"><label>Nereye</label><select data-f="toAccountId"><option value="">Seç</option>${accOptions(d.toAccountId, a => a.id !== d.accountId)}</select></div>` : ''}
       ${d.isRule ? `
       <div class="field"><label>Sıklık</label><select data-f="freq">${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.freq === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
