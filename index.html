@@ -717,7 +717,9 @@ function derive() {
   const add = (m, id, v) => m.set(id, (m.get(id) || 0) + v);
   for (const t of S.txs) {
     if (t.prov) add(prov, t.accountId, t.amount); // provizyon is spent money: in the balance; D.prov lets us show the bank's figure (without it) too
-    const m = t.date > today ? future : bal;
+    // a card expense dated later (an installment) is already charged: the bank shows it in the card's debt, so it
+    // counts in the balance now. Anything else dated later waits in "future" until its day.
+    const m = t.date > today && !(t.type === 'expense' && acc.get(t.accountId)?.type === 'card') ? future : bal;
     if (t.type === 'expense') add(m, t.accountId, -t.amount);
     else if (t.type === 'income') add(m, t.accountId, t.amount);
     else if (t.type === 'adjust') add(m, t.accountId, t.amount);
@@ -1203,7 +1205,7 @@ VIEWS.accounts = () => {
     if (a.type === 'card') {
       const c = cardCycle(a);
       sub = c ? (c.dueNow > 0.004 ? `Ödenecek ${money(c.dueNow, false)} · ${relDay(c.due)}` : `Sonraki kesim ${shortDate(c.nextClose)}`)
-        : f ? `Gelecek taksitler ${money(Math.abs(f), false)}` : 'Kredi kartı';
+        : f ? `Planlı ${money(f)}` : 'Kredi kartı';
     }
     if (a.type === 'bank') sub = 'Banka hesabı';
     const bank = a.type === 'card' && a.parentId ? S.accounts.find(x => x.id === a.parentId && !x.deleted) : null;
@@ -1388,7 +1390,9 @@ function accHero(a) {
         <div><span>Gelecek ekstre</span><b class="num">${money(c.next)}</b><span>Kesim ${shortDate(c.nextClose)} · Ödeme ${shortDate(c.nextDue)}${D.prov.get(a.id) ? ' · provizyon hariç' : ''}</span></div></div>`;
       if (c.dueNow > 0.004) h += `<button class="hero-btn" data-action="pay-card" data-id="${a.id}" data-amt="${c.dueNow}">Borcu öde</button>`;
     } else h += `<button class="hero-hint" data-action="edit-acc" data-id="${a.id}">Kesim ve son ödeme günlerini ekle →</button>`;
-    if (fut) h += `<div class="label" style="margin-top:12px">Gelecek taksitler toplamı: ${money(Math.abs(fut))}</div>`;
+    const inst = S.txs.reduce((v, t) => v + (t.accountId === a.id && t.type === 'expense' && !t.prov && t.date > D.today ? t.amount : 0), 0);
+    if (inst) h += `<div class="label" style="margin-top:12px">Bakiyeye dahil ileri tarihli taksitler: ${money(inst)}</div>`;
+    if (fut) h += `<div class="label" style="margin-top:${inst ? 4 : 12}px">Planlı işlemler: ${money(fut)}</div>`;
   } else if (fut) h += `<div class="label">Planlı işlemler: ${money(fut)}</div>`;
   return h + '</section>';
 }
