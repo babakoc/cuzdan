@@ -706,6 +706,8 @@ function derive() {
   const byMonth = new Map();
   for (const t of S.txs) { const k = periodKey(t.date); if (!byMonth.has(k)) byMonth.set(k, []); byMonth.get(k).push(t); }
   for (const l of byMonth.values()) l.sort(txSort);
+  // what spending totals read (Özet, dağılım, kategori grafikleri, bütçe): provizyon stays out until it is posted
+  const stat = new Map([...byMonth].map(([k, l]) => [k, l.filter(t => !t.prov)]));
   let assets = 0, debts = 0;
   for (const a of S.accounts) { if (a.hidden || a.deleted) continue; const v = bal.get(a.id) || 0; if (v >= 0) assets += v; else debts += v; }
   // Loans weigh on net worth only by the installments due up to the end of the current period (overdue included),
@@ -715,7 +717,7 @@ function derive() {
   let loanDebt = 0, loanDue = 0;
   for (const l of S.loans || []) { const st = loanState(l); loanDebt += st.remaining; for (const r of st.rows) if (!r.paid && r.date <= pEnd) loanDue += r.amount; }
   loanDue = r2(loanDue); debts -= loanDue;
-  D = {acc, cat, bal, future, prov, byMonth, assets, debts, loanDebt, loanDue, today};
+  D = {acc, cat, bal, future, prov, byMonth, stat, assets, debts, loanDebt, loanDue, today};
 }
 const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
 const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
@@ -901,7 +903,7 @@ function runLoans() { // auto-pay: installments that came due are paid from the 
 
 function monthStats(m) {
   let inc = 0, exp = 0; const cats = new Map(), incCats = new Map();
-  for (const t of D.byMonth.get(m) || []) {
+  for (const t of D.stat.get(m) || []) {
     if (t.type === 'income') { inc += t.amount; const k = topCat(t.categoryId)?.id || '_'; incCats.set(k, (incCats.get(k) || 0) + t.amount); }
     else if (t.type === 'expense') { exp += t.amount; const c = topCat(t.categoryId); const k = c?.id || '_'; cats.set(k, (cats.get(k) || 0) + t.amount); }
   }
@@ -1236,7 +1238,7 @@ function filterMatch(t) {
 }
 function catSeries(c, m) {
   let inn = 0, out = 0;
-  for (const t of D.byMonth.get(m) || []) {
+  for (const t of D.stat.get(m) || []) {
     if ((t.type !== 'income' && t.type !== 'expense') || !filterMatch(t)) continue;
     if (t.type === 'income') inn += t.amount; else out += t.amount;
   }
@@ -1319,7 +1321,7 @@ function catCharts(c) {
   const kids = S.categories.filter(x => x.parentId === c.id);
   if (kids.length && !c.link) {
     const map = new Map(), kidIds = new Set(kids.map(k => k.id));
-    for (const t of D.byMonth.get(ui.month) || []) {
+    for (const t of D.stat.get(ui.month) || []) {
       if (t.type !== c.kind) continue;
       if (kidIds.has(t.categoryId)) map.set(t.categoryId, (map.get(t.categoryId) || 0) + t.amount);
       else if (t.categoryId === c.id) map.set('_self', (map.get('_self') || 0) + t.amount);
@@ -1330,7 +1332,7 @@ function catCharts(c) {
   // a subcategory (no children of its own) splits by note
   if (!kids.length && !c.link && note == null) {
     const map = new Map();
-    for (const t of D.byMonth.get(ui.month) || []) if (t.type === c.kind && filterMatch(t)) { const k = noteKey(t.note); map.set(k, (map.get(k) || 0) + t.amount); }
+    for (const t of D.stat.get(ui.month) || []) if (t.type === c.kind && filterMatch(t)) { const k = noteKey(t.note); map.set(k, (map.get(k) || 0) + t.amount); }
     if (map.size > 1 || (map.size === 1 && !map.has(''))) html += donutCard(`${esc(c.name)} · notlar`, map, '', k => noteName(k), k => `data-action="note-drill" data-note="${esc(k)}"`, k => noteIconFor(c.id, k));
   }
   return html;
@@ -1370,13 +1372,13 @@ function renderTxList() {
   if (ui.catFilter || ui.noteFilter != null) list = list.filter(filterMatch);
   let sum = '';
   if (lk) {
-    let inn = 0, out = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
+    let inn = 0, out = 0; for (const t of list) { if (t.v || t.prov) continue; if (t.type === 'income') inn += t.amount; else out += t.amount; }
     sum = `<div class="link-sum"><span>Gelen<b class="num pos">+${money(inn, false)}</b></span><span>Giden<b class="num neg">−${money(out, false)}</b></span><span>Net<b class="num ${inn - out >= 0 ? 'pos' : 'neg'}">${inn - out >= 0 ? '+' : '−'}${money(Math.abs(inn - out), false)}</b></span></div>`;
   } else if (ui.accFilter && !ui.catFilter) {
     const W = flowWords(D.acc.get(ui.accFilter)), f = accFlow(ui.accFilter, list), net = f.inn - f.out;
     sum = `<div class="link-sum"><span>${W.out}<b class="num neg">${money(f.out, false)}</b></span><span>${W.in}<b class="num pos">${money(f.inn, false)}</b></span><span>Net<b class="num ${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : '−'}${money(Math.abs(net), false)}</b></span></div>`;
   } else if (!ui.catFilter) { // income / expense / difference of what the list shows (whole period, or a search)
-    let inc = 0, exp = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
+    let inc = 0, exp = 0; for (const t of list) { if (t.v || t.prov) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
     sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
   if (provList.length) sum = `<div class="sec-title">Provizyonda<small class="num">${money(provList.reduce((s, t) => s + t.amount, 0), false)}</small></div>
@@ -1389,7 +1391,7 @@ function renderTxList() {
   let html = sum, day = null, buf = [];
   const flush = () => {
     if (!buf.length) return;
-    const net = buf.reduce((s, t) => s + (t.v ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
+    const net = buf.reduce((s, t) => s + (t.v || t.prov ? 0 : t.type === 'income' ? t.amount : t.type === 'expense' ? -t.amount : 0), 0);
     html += `<div class="day"><span>${dayLabel(day)}</span><span class="num">${net ? (net > 0 ? '+' : '−') + money(Math.abs(net)) : ''}</span></div><div class="list">${buf.map(t => t.v ? vRow(t, ui.accFilter) : txRow(t, ui.accFilter)).join('')}</div>`;
     buf = [];
   };
@@ -1405,7 +1407,7 @@ function renderTxList() {
 const budgetOf = id => +(S.budgets || {})[id] || 0;
 function catSpent(id, m) {
   let v = 0;
-  for (const t of D.byMonth.get(m) || []) if (t.type === 'expense' && (t.categoryId === id || D.cat.get(t.categoryId)?.parentId === id)) v += t.amount;
+  for (const t of D.stat.get(m) || []) if (t.type === 'expense' && (t.categoryId === id || D.cat.get(t.categoryId)?.parentId === id)) v += t.amount;
   return Math.max(0, v);
 }
 const daysBetween = (a, b) => Math.round((parseD(b) - parseD(a)) / 864e5);
@@ -1426,7 +1428,7 @@ function forecast(id, m) {
   for (let i = 1; i <= 6; i++) {
     const p = shiftMonth(m, -i), full = catSpent(id, p); if (full < 0.01) continue;
     const lim = addDays(periodRange(p)[0], day); let by = 0;
-    for (const t of D.byMonth.get(p) || []) if (t.type === 'expense' && t.date <= lim && (t.categoryId === id || D.cat.get(t.categoryId)?.parentId === id)) by += t.amount;
+    for (const t of D.stat.get(p) || []) if (t.type === 'expense' && t.date <= lim && (t.categoryId === id || D.cat.get(t.categoryId)?.parentId === id)) by += t.amount;
     fr.push(Math.min(1, Math.max(0, by / full)));
   }
   if (!fr.length) return Math.max(s, s / prog);
