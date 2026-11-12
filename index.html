@@ -750,6 +750,18 @@ function cardCycle(a) {
   return {close, due, nextClose, nextDue, statement, paid, dueNow, next};
 }
 
+/* A credit card opened from Hesaplar is browsed by its own statements: with the cut on the 20th, the "Kasım"
+   period is 21 Ekim – 20 Kasım, so a purchase on 25 Ekim shows under the statement it belongs to.
+   statementDay 31 = month end = calendar month. Everywhere else the app's own period is used. */
+const cardPD = a => a?.type === 'card' && +a.statementDay && +a.statementDay < 31 ? +a.statementDay + 1 : null;
+const viewPD = () => (ui.tab === 'txs' && ui.accFilter && cardPD(D.acc.get(ui.accFilter))) || null;
+const viewRange = m => periodRange(m, viewPD() || periodDay());
+const viewCur = () => { const pd = viewPD(); return pd ? periodKey(todayStr(), pd) : curMonth(); };
+function viewTxs(m) {
+  if (!viewPD()) return D.byMonth.get(m) || [];
+  const [a, b] = viewRange(m); return S.txs.filter(t => t.date >= a && t.date <= b).sort(txSort);
+}
+
 /* ---------- recurring ---------- */
 const FREQ = {monthly:'Her ay', weekly:'Her hafta', yearly:'Her yıl'};
 function nextOcc(r, from) {
@@ -787,8 +799,8 @@ function ruleLook(r) {
 }
 // things that will happen in period m but are not transactions yet: recurring occurrences, unpaid loan
 // installments, card statements due. They show in the list on their own date, marked as upcoming.
-function upcomingIn(m) {
-  const [a, b] = periodRange(m), t = todayStr(), out = [];
+function upcomingIn(m, range) {
+  const [a, b] = range || periodRange(m), t = todayStr(), out = [];
   for (const r of S.rules || []) {
     if (!ruleActive(r)) continue;
     let d = r.nextDate, g = 0;
@@ -905,6 +917,7 @@ function drillTo(apply) {
 function goBack() {
   const f = ui.stack.pop(); if (!f) return;
   Object.assign(ui, {tab:f.tab, accFilter:f.accFilter, catFilter:f.catFilter, noteFilter:f.noteFilter ?? null, q:f.q, chartEnd:f.chartEnd || null});
+  if (f.month) ui.month = f.month; // a card view moved to its own statement period; hand the app's period back
   render(); window.scrollTo(0, f.y); setTimeout(() => window.scrollTo(0, f.y), 30); // again once images/fonts settle
 }
 const backBtn = () => { const f = ui.stack[ui.stack.length - 1]; if (!f) return '';
@@ -939,7 +952,7 @@ const ICON = {
   search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
   rowChev:'<svg class="chev" viewBox="0 0 8 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m1 1 6 6-6 6"/></svg>'
 };
-const monthSwitch = () => { const [a, b] = periodRange(ui.month); return `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki dönem">${ICON.chevL}</button><button class="mlabel" data-action="period-pick">${monthLabel(ui.month)}<i class="caret">▾</i>${periodDay() > 1 ? `<small>${shortDate(a)} – ${shortDate(b)}</small>` : ''}</button><button data-action="month" data-d="1" aria-label="Sonraki dönem">${ICON.chevR}</button></div>${ui.month !== curMonth() ? `<div class="to-today"><button data-action="to-today">Bugüne dön · ${monthLabel(curMonth())}</button></div>` : ''}`; };
+const monthSwitch = () => { const [a, b] = viewRange(ui.month), card = !!viewPD(), cur = viewCur(); return `<div class="month"><button data-action="month" data-d="-1" aria-label="Önceki dönem">${ICON.chevL}</button><button class="mlabel" data-action="period-pick">${monthLabel(ui.month)}<i class="caret">▾</i>${periodDay() > 1 || card ? `<small>${card ? 'Ekstre · ' : ''}${shortDate(a)} – ${shortDate(b)}</small>` : ''}</button><button data-action="month" data-d="1" aria-label="Sonraki dönem">${ICON.chevR}</button></div>${ui.month !== cur ? `<div class="to-today"><button data-action="to-today">${card ? 'Güncel ekstre' : 'Bugüne dön'} · ${monthLabel(cur)}</button></div>` : ''}`; };
 
 function txRow(t, ctxAcc, withDate) {
   let icon, color, title, sub, amt, cls = '';
@@ -1241,7 +1254,7 @@ function accCharts(a) {
   if (!ui.chartEnd) ui.chartEnd = ui.month;
   if (ui.month > ui.chartEnd) ui.chartEnd = ui.month; else if (ui.month < shiftMonth(ui.chartEnd, -11)) ui.chartEnd = shiftMonth(ui.month, 11);
   const end = ui.chartEnd, start = shiftMonth(end, -11);
-  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, D.byMonth.get(m) || [])}));
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, viewTxs(m))}));
   const maxV = Math.max(1, ...ser.map(x => Math.max(x.inn, x.out)));
   const act = ser.filter(x => x.inn > 0.004 || x.out > 0.004), n = act.length || 1;
   const ai = act.reduce((s, x) => s + x.inn, 0) / n, ao = act.reduce((s, x) => s + x.out, 0) / n;
@@ -1341,7 +1354,7 @@ function renderTxList() {
       const hay = [t.note, t.memo, catPath(t.categoryId), accName(t.accountId), t.toAccountId && accName(t.toAccountId), String(t.amount).replace('.', ',')].join(' ').toLocaleLowerCase('tr');
       return hay.includes(q);
     }).sort(txSort);
-  } else list = [...(D.byMonth.get(ui.month) || []), ...upcomingIn(ui.month)].sort(txSort);
+  } else list = [...viewTxs(ui.month), ...upcomingIn(ui.month, viewRange(ui.month))].sort(txSort);
   if (ui.accFilter) list = list.filter(t => t.accountId === ui.accFilter || t.toAccountId === ui.accFilter);
   // a linked category (Kredi, Yatırım, Borç) shows its income and expense side together, with the net
   const lk = ui.catFilter && linkOf(ui.catFilter);
@@ -1974,7 +1987,7 @@ const A = {
   },
   tab(el, e) { e?.preventDefault(); if (el.closest('nav.tabs')) ui.stack = []; if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; ui.noteFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
   month(el) { ui.month = shiftMonth(ui.month, +el.dataset.d); render(); },
-  'to-today'() { ui.month = curMonth(); render(); },
+  'to-today'() { ui.month = viewCur(); render(); },
   'period-pick'() { sheetState = {isPicker:true, year:+ui.month.slice(0, 4)}; drawPeriodPicker(); },
   'pick-year'(el) { sheetState.year += +el.dataset.d; drawPeriodPicker(); },
   'pick-month'(el) { ui.month = el.dataset.m; closeSheet(); const y = window.scrollY; render(); window.scrollTo(0, y); },
@@ -2061,7 +2074,10 @@ const A = {
     S.txs = S.txs.filter(t => t.loanId !== sheetState.id); S.loans = S.loans.filter(x => x.id !== sheetState.id);
     save(); closeSheet(); render(); toast('Kredi silindi');
   },
-  'open-acc'(el) { if (sheetState) closeSheet(); drillTo(() => { ui.accFilter = el.dataset.id; ui.catFilter = null; ui.noteFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
+  'open-acc'(el) { if (sheetState) closeSheet(); drillTo(() => {
+    const pd = cardPD(D.acc.get(el.dataset.id));
+    if (pd && ui.month === curMonth()) { ui.stack[ui.stack.length - 1].month = ui.month; ui.month = periodKey(todayStr(), pd); }
+    ui.accFilter = el.dataset.id; ui.catFilter = null; ui.noteFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'clear-acc'() { ui.accFilter = null; render(); },
   'clear-cat'() { ui.catFilter = null; ui.noteFilter = null; render(); },
   'close-sheet': closeSheet,
