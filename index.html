@@ -326,7 +326,12 @@ html.ax .dist .n,html.ax .flow-top b{white-space:normal}
 .prov-row{display:flex;align-items:center;gap:8px;padding-right:14px}.prov-row>.row{flex:1;min-width:0;padding-right:4px}
 .prov-row .pay-btn{flex:none}
 .prov-all b{color:var(--accent);font-weight:600}
-.badge.prov{background:var(--warn-fill);color:#000;opacity:.85}
+.row.prov{box-shadow:inset 4px 0 0 var(--warn-fill)}
+.row.prov .ic{opacity:.6}
+.prov-tag{display:flex;align-items:center;gap:4px;color:var(--warn)!important;font-weight:600}
+.prov-tag svg{width:13px;height:13px;flex:none}
+.row .a.prov-amt{color:var(--muted)}
+.row .a.prov-amt small{display:block;font-size:var(--t-cap2);color:var(--warn);font-weight:600;text-decoration:none}
 .badge{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:8px;background:var(--chip);color:var(--muted);margin-left:6px;vertical-align:1px}
 .badge.soon{background:color-mix(in srgb,var(--accent-fill) 16%,transparent);color:var(--accent)}
 .badge.late{background:color-mix(in srgb,var(--neg-fill) 16%,transparent);color:var(--neg)}
@@ -961,6 +966,7 @@ const FLOW_IN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 const FLOW_OUT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 const SV = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const ICON = {
+  clock:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   wallet:SV('<path d="M19 7V5.5A1.5 1.5 0 0 0 17.5 4H5a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v3M3 6v12a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 12v4h-4a2 2 0 0 1 0-4z"/>'),
   bank:SV('<path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/>'),
   receipt:SV('<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3"/>'),
@@ -994,11 +1000,12 @@ function txRow(t, ctxAcc, withDate) {
     const v = t.type === 'income' ? t.amount : -t.amount; // refunds are negative expenses
     amt = (v >= 0 ? '+' : '−') + money(Math.abs(v)); cls = v >= 0 ? 'pos' : '';
   }
-  const planned = (t.prov ? '<span class="badge prov">Provizyon</span>' : t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
-  return `<button class="row" data-action="edit-tx" data-id="${t.id}">
+  // provizyon: its own status line (a badge next to a long title gets cut off), a dimmed amount and an orange edge
+  const planned = (t.prov ? '' : t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
+  return `<button class="row${t.prov ? ' prov' : ''}" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
-    <div class="t"><b>${esc(title)}${planned}</b>${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
-    <div class="a num ${cls}">${amt}</div></button>`;
+    <div class="t"><b>${esc(title)}${planned}</b>${t.prov ? `<small class="prov-tag">${ICON.clock}Provizyonda</small>` : ''}${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
+    <div class="a num ${t.prov ? 'prov-amt' : cls}">${amt}${t.prov ? '<small>beklemede</small>' : ''}</div></button>`;
 }
 
 /* ---------- views ---------- */
