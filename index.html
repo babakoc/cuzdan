@@ -409,6 +409,8 @@ body.sheet-open{overflow:hidden}
 .sheet-head>:last-child{justify-self:end}
 div.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--chip);border-radius:20px;padding:2px;margin-bottom:14px}
 div.seg button{min-height:36px;border-radius:18px;font-weight:500;font-size:var(--t-sub);color:var(--text)}
+.copy-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.copy-row .secondary{margin:0}
+html.ax .copy-row{grid-template-columns:1fr}
 .theme-row{padding:8px 12px}.theme-row div.seg{margin:0;flex:1}
 div.seg button.on{background:var(--card-elev);font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04)}
 .amount{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:10px 0 18px}
@@ -1695,8 +1697,11 @@ function drawTxSheet() {
   const parents = S.categories.filter(x => x.kind === kind && !x.parentId && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const children = d.catParent ? S.categories.filter(x => x.parentId === d.catParent && visibleCat(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) : [];
   const isAdj = d.type === 'adjust';
+  // Taksit / Tekrar: on new transactions and on existing ones that aren't already part of a plan (loan, installments, rule)
+  const plan = !d.isRule && !isAdj && !d.loanId && !d.instGroup && !d.recurringId;
+  const back = plan && d.repeat && !(+d.instN > 1) ? backfillDates(d) : [];
   openSheet(`
-    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isRule ? (d.isNew ? 'Yeni tekrar' : 'Tekrarlayan') : d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isRule ? (d.isNew ? 'Yeni tekrar' : 'Tekrarlayan') : d.isCopy ? 'Kopya işlem' : d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
     ${isAdj ? '' : `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>`}
     ${isAdj ? '' : `<button class="tx-icon" data-action="icon-open"><span class="ic-big" style="background:${tcol}22;color:${tcol}">${ico(shown)}</span><small>${ctx.cur ? 'Özel simge' : 'Simgeyi değiştir'}</small></button>`}
     <div class="amount">${d.type !== 'transfer' && !d.isRule ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
@@ -1709,9 +1714,10 @@ function drawTxSheet() {
       <div class="field"><label>Bitiş</label><input type="date" data-f="endDate" value="${d.endDate || ''}" placeholder="Süresiz"></div>
       <div class="field"><label>Otomatik ekle</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Kapalıysa onayını bekler</span><input type="checkbox" data-f="auto" ${d.auto ? 'checked' : ''}></div>
       ${d.isNew ? '' : `<div class="field"><label>Duraklat</label><span style="flex:1"></span><input type="checkbox" data-f="paused" ${d.paused ? 'checked' : ''}></div>`}`
-      : `<div class="field"><label>Tarih</label><input type="date" data-f="date" value="${d.date}"></div>
-      ${d.isNew && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="inst" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.inst === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
-      ${d.isNew && !isAdj && !(+d.inst > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}`}
+      : `<div class="field"><label>Tarih</label><input type="date" data-f="date" ${plan && d.repeat ? 'data-redraw-tx="1"' : ''} value="${d.date}"></div>
+      ${plan && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="instN" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.instN === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
+      ${plan && !(+d.instN > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat" data-redraw-tx="1"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
+      ${back.length ? `<div class="field"><label>Geçmişi doldur</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">${back.length} işlem eklenir</span><input type="checkbox" data-f="backfill" data-redraw-tx="1" ${d.backfill !== false ? 'checked' : ''}></div>` : ''}`}
       <div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı" autocomplete="off"></div>
       <div class="note-sugs" id="note-sugs">${noteSugHTML(d)}</div>
     </div>
@@ -1719,7 +1725,9 @@ function drawTxSheet() {
       <div class="sub-label">Kategori</div>
       <div class="cats">${parents.map(p => `<button class="chip ${d.catParent === p.id ? 'on' : ''}" data-action="pick-parent" data-id="${p.id}">${p.emoji ? ico(p.emoji, 'inline') : ''} ${esc(p.name)}</button>`).join('')}</div>
       ${children.length ? `<div class="sub-label">Alt kategori</div><div class="cats">${children.map(ch => `<button class="chip ${d.categoryId === ch.id ? 'on' : ''}" data-action="pick-cat" data-id="${ch.id}">${esc(ch.name)}</button>`).join('')}</div>` : ''}`}
-    ${d.isNew && +d.inst > 1 && d.type === 'expense' ? `<p class="note">Toplam tutarı gir. ${instPreview(d)}</p>` : ''}
+    ${plan && +d.instN > 1 && d.type === 'expense' ? `<p class="note">${d.isNew ? 'Toplam tutarı gir. ' : 'Bu tutar toplam kabul edilir ve taksitlere bölünür. '}${instPreview(d)}</p>` : ''}
+    ${back.length ? `<p class="note">${d.backfill !== false ? `${shortDate(back[0])} – ${shortDate(back[back.length - 1])} arasındaki ${back.length} tekrar da eklenecek.` : 'Geçmiş tekrarlar eklenmez; tekrar bugünden sonra başlar.'} Bu dönemleri zaten girdiysen "Geçmişi doldur"u kapat.</p>` : ''}
+    ${d.isNew || d.isRule || isAdj ? '' : `<div class="copy-row"><button class="secondary" data-action="copy-tx" data-when="same">Kopyala · ${shortDate(d.date)}</button><button class="secondary" data-action="copy-tx" data-when="today">Kopyala · bugün</button></div>`}
     ${d.isRule ? `<p class="note">Ayın 29–31'i gibi günler kısa aylarda ayın son gününe kayar. Geçmiş tarihli tekrarlar geriye dönük eklenmez.</p>` : ''}
     ${d.isNew ? '' : `<button class="secondary danger" data-action="del-tx">${d.isRule ? 'Tekrarı sil (eklenmiş işlemler kalır)' : 'İşlemi sil'}</button>`}
     ${!d.isRule && !d.isNew && d.loanId ? `<p class="note" style="text-align:center">Bu işlem "${esc(S.loans.find(x => x.id === d.loanId)?.name || 'kredi')}" kredisine bağlı${d.inst != null ? ` (${d.inst + 1}. taksit). Silersen taksit ödenmemiş görünür` : ''}.</p>` : ''}
@@ -1727,10 +1735,17 @@ function drawTxSheet() {
   `);
   sizeAmt();
 }
+// occurrences of a repeat that fall after the transaction's date, up to today (what "Geçmişi doldur" would add)
+function backfillDates(d) {
+  const t = todayStr(), date = d.date || t; if (!d.repeat || date >= t) return [];
+  const r = {freq:d.repeat, startDate:date, anchorDay:+date.slice(8)}, out = [];
+  let x = nextOcc(r, date), g = 0; while (x <= t && g++ < 400) { out.push(x); x = nextOcc(r, x); }
+  return out;
+}
 // splits a total into n monthly installments; the last one absorbs the rounding
 function splitInst(total, n) { const base = Math.floor(total / n * 100) / 100; return Array.from({length:n}, (_, i) => i === n - 1 ? r2(total - base * (n - 1)) : base); }
 function instPreview(d) {
-  const total = parseAmount(d.amount), n = +d.inst; if (!(total > 0)) return `${n} aya bölünür; her ay aynı gün bir taksit eklenir.`;
+  const total = Math.abs(parseAmount(d.amount)), n = +d.instN; if (!(total > 0)) return `${n} aya bölünür; her ay aynı gün bir taksit eklenir.`;
   const parts = splitInst(total, n), [y, m, dd] = (d.date || todayStr()).split('-').map(Number);
   return `${n} × ${money(parts[0])}${parts[n - 1] !== parts[0] ? ` (son taksit ${money(parts[n - 1])})` : ''} · son taksit ${parseD(mkDate(y, m + n - 1, dd)).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}`;
 }
@@ -2082,9 +2097,11 @@ const A = {
     if (d.loanId) { t.loanId = d.loanId; if (d.inst != null) t.inst = d.inst; }
     if (d.icon && d.type !== 'adjust') t.icon = d.icon;
     if (d.instGroup) Object.assign(t, {instGroup:d.instGroup, instNo:d.instNo, instTotal:d.instTotal});
-    if (d.isNew && t.type === 'expense' && +d.inst > 1) {
+    const plan = !d.loanId && !d.instGroup && !d.recurringId && t.type !== 'adjust';
+    if (plan && t.type === 'expense' && +d.instN > 1) {
       if (!(t.amount > 0)) return toast('Taksitli işlemde tutar pozitif olmalı');
-      const n = +d.inst, parts = splitInst(t.amount, n), group = uid(), [y, m, dd] = t.date.split('-').map(Number);
+      if (!d.isNew) S.txs = S.txs.filter(x => x.id !== t.id); // the edited transaction becomes installment 1
+      const n = +d.instN, parts = splitInst(t.amount, n), group = uid(), [y, m, dd] = t.date.split('-').map(Number);
       for (let k = 0; k < n; k++) S.txs.push({...t, id:k === 0 ? t.id : uid(), amount:parts[k], date:mkDate(y, m + k, dd), ts:t.ts + k,
         note:`${t.note ? t.note + ' ' : ''}(${k + 1}/${n})`, instGroup:group, instNo:k + 1, instTotal:n});
       S.meta.lastAccount = t.accountId;
@@ -2092,11 +2109,15 @@ const A = {
       return;
     }
     let rule = null;
-    if (d.isNew && d.repeat && d.type !== 'adjust') { // this transaction plus a rule that repeats it from its date on
+    let filled = 0;
+    if (plan && d.repeat) { // this transaction plus a rule that repeats it from its date on
       rule = {id:uid(), type:t.type, amount:t.amount, accountId:t.accountId, toAccountId:t.toAccountId, categoryId:t.categoryId, note:t.note, icon:t.icon || null,
         freq:d.repeat, startDate:t.date, anchorDay:+t.date.slice(8), endDate:null, auto:true, paused:false};
       const today = todayStr();
-      rule.nextDate = firstOcc(rule, t.date >= today ? addDays(t.date, 1) : today);
+      // past date: by default every occurrence between it and today is added too (runRecurring catches up from nextDate)
+      const back = t.date < today && d.backfill !== false;
+      if (back) filled = backfillDates({...d, date:t.date}).length;
+      rule.nextDate = firstOcc(rule, back || t.date >= today ? addDays(t.date, 1) : today);
       t.recurringId = rule.id; (S.rules = S.rules || []).push(rule);
     }
     const i = S.txs.findIndex(x => x.id === t.id);
@@ -2104,7 +2125,14 @@ const A = {
     S.meta.lastAccount = t.accountId;
     if (rule) runRecurring();
     save(); closeSheet(); render();
-    toast(rule ? `İşlem eklendi · ${FREQ[rule.freq].toLocaleLowerCase('tr')} tekrarlanacak, sonraki ${shortDate(rule.nextDate)}` : d.isNew ? 'İşlem eklendi' : 'Güncellendi');
+    toast(rule ? `${d.isNew ? 'İşlem eklendi' : 'Güncellendi'} · ${filled ? `${filled} geçmiş tekrar eklendi, ` : ''}${FREQ[rule.freq].toLocaleLowerCase('tr')} tekrarlanacak, sonraki ${shortDate(rule.nextDate)}` : d.isNew ? 'İşlem eklendi' : 'Güncellendi');
+  },
+  // copy: opens a new, prefilled transaction (not linked to any loan / installment plan / rule) on the original date or today
+  'copy-tx'(el) {
+    const d = sheetState, date = el.dataset.when === 'today' ? todayStr() : d.date;
+    sheetState = {id:uid(), type:d.type, amount:d.amount, accountId:d.accountId, toAccountId:d.toAccountId, categoryId:d.categoryId, catParent:d.catParent,
+      date, note:d.note || '', memo:d.memo || '', icon:d.icon || null, isNew:true, isCopy:true};
+    drawTxSheet(); $('#sheet').scrollTop = 0; toast(`Kopya · ${shortDate(date)} · kaydetmeden önce düzenleyebilirsin`);
   },
   'del-tx'() {
     if (sheetState.isRule) {
@@ -2186,7 +2214,7 @@ document.addEventListener('input', e => {
   if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
   if (el.id === 'f-amt') { sizeAmt(); document.querySelector('.amt-sign')?.classList.toggle('on', el.value.trim().startsWith('-')); }
   if (el.dataset.f === 'note' && $('#note-sugs')) $('#note-sugs').innerHTML = noteSugHTML(sheetState);
-  if (el.id === 'f-amt' && +sheetState.inst > 1 && !sheetState.isRule) { const n = document.querySelector('#sheet p.note'); if (n) n.textContent = 'Toplam tutarı gir. ' + instPreview(sheetState); }
+  if (el.id === 'f-amt' && +sheetState.instN > 1 && !sheetState.isRule) { const n = document.querySelector('#sheet p.note'); if (n) n.textContent = (sheetState.isNew ? 'Toplam tutarı gir. ' : 'Bu tutar toplam kabul edilir ve taksitlere bölünür. ') + instPreview(sheetState); }
   if (sheetState.isLoan && $('#loan-sum')) $('#loan-sum').innerHTML = loanSummary(sheetState);
   if (el.dataset.cf) { sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value; }
 });
@@ -2197,7 +2225,7 @@ document.addEventListener('change', e => {
     if (el.dataset.redraw) drawAccSheet();
     if (sheetState.isPeriod) drawPeriodSheet();
     if (sheetState.isBudget && el.dataset.f === 'id') drawBudgetSheet();
-    if (el.dataset.redrawTx) drawTxSheet();
+    if (el.dataset.redrawTx) { const y = $('#sheet').scrollTop; drawTxSheet(); $('#sheet').scrollTop = y; }
     if (el.dataset.f === 'accountId' && sheetState.type === 'transfer') drawTxSheet();
   }
   if (el.dataset.cf) sheetState.cat[el.dataset.cf] = el.type === 'checkbox' ? el.checked : el.value;
