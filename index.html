@@ -323,6 +323,10 @@ html.ax .dist .n,html.ax .flow-top b{white-space:normal}
 .cat-meta small{display:block;font-size:11px;font-weight:500}
 .row.upcoming{opacity:.8}
 .row.upcoming .ic{outline:1.5px dashed currentColor;outline-offset:-1.5px}
+.prov-row{display:flex;align-items:center;gap:8px;padding-right:14px}.prov-row>.row{flex:1;min-width:0;padding-right:4px}
+.prov-row .pay-btn{flex:none}
+.prov-all b{color:var(--accent);font-weight:600}
+.badge.prov{background:var(--warn-fill);color:#000;opacity:.85}
 .badge{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:8px;background:var(--chip);color:var(--muted);margin-left:6px;vertical-align:1px}
 .badge.soon{background:color-mix(in srgb,var(--accent-fill) 16%,transparent);color:var(--accent)}
 .badge.late{background:color-mix(in srgb,var(--neg-fill) 16%,transparent);color:var(--neg)}
@@ -689,9 +693,10 @@ function derive() {
   const acc = new Map(S.accounts.map(a => [a.id, a]));
   const cat = new Map(S.categories.map(c => [c.id, c]));
   const bal = new Map(S.accounts.map(a => [a.id, +a.opening || 0]));
-  const future = new Map();
+  const future = new Map(), prov = new Map();
   const add = (m, id, v) => m.set(id, (m.get(id) || 0) + v);
   for (const t of S.txs) {
+    if (t.prov) { add(prov, t.accountId, t.amount); continue; } // provizyon: not on the card's balance until posted
     const m = t.date > today ? future : bal;
     if (t.type === 'expense') add(m, t.accountId, -t.amount);
     else if (t.type === 'income') add(m, t.accountId, t.amount);
@@ -710,7 +715,7 @@ function derive() {
   let loanDebt = 0, loanDue = 0;
   for (const l of S.loans || []) { const st = loanState(l); loanDebt += st.remaining; for (const r of st.rows) if (!r.paid && r.date <= pEnd) loanDue += r.amount; }
   loanDue = r2(loanDue); debts -= loanDue;
-  D = {acc, cat, bal, future, byMonth, assets, debts, loanDebt, loanDue, today};
+  D = {acc, cat, bal, future, prov, byMonth, assets, debts, loanDebt, loanDue, today};
 }
 const txSort = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
 const topCat = id => { let c = D.cat.get(id); while (c && c.parentId && D.cat.get(c.parentId)) c = D.cat.get(c.parentId); return c; };
@@ -720,7 +725,7 @@ const accName = id => { const a = D.acc.get(id); return !a ? 'Silinmiş hesap' :
 function balAt(id, date) {
   let v = +(D.acc.get(id)?.opening) || 0;
   for (const t of S.txs) {
-    if (t.date > date) continue;
+    if (t.date > date || t.prov) continue;
     if (t.accountId === id) v += (t.type === 'income' || t.type === 'adjust') ? t.amount : -t.amount;
     if (t.type === 'transfer' && t.toAccountId === id) v += t.amount;
   }
@@ -741,7 +746,7 @@ function cardCycle(a) {
   const statement = Math.max(0, -balAt(a.id, close));
   let paid = 0;
   for (const x of S.txs) {
-    if (x.date <= close || x.date > t) continue;
+    if (x.date <= close || x.date > t || x.prov) continue;
     if (x.type === 'transfer' && x.toAccountId === a.id) paid += x.amount;
     else if (x.type === 'income' && x.accountId === a.id) paid += x.amount;
   }
@@ -973,7 +978,7 @@ function txRow(t, ctxAcc, withDate) {
     const v = t.type === 'income' ? t.amount : -t.amount; // refunds are negative expenses
     amt = (v >= 0 ? '+' : '−') + money(Math.abs(v)); cls = v >= 0 ? 'pos' : '';
   }
-  const planned = (t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
+  const planned = (t.prov ? '<span class="badge prov">Provizyon</span>' : t.date > D.today ? '<span class="badge">Planlı</span>' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
     <div class="t"><b>${esc(title)}${planned}</b>${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
@@ -1166,6 +1171,7 @@ VIEWS.accounts = () => {
     if (a.type === 'bank') sub = 'Banka hesabı';
     const bank = a.type === 'card' && a.parentId ? S.accounts.find(x => x.id === a.parentId && !x.deleted) : null;
     if (bank) sub = `${bank.name} · ${sub}`;
+    if (D.prov.get(a.id)) sub += ` · ${money(D.prov.get(a.id), false)} provizyonda`;
     const meter = a.type === 'card' && a.limit ? `<div class="meter"><i style="width:${Math.min(100, Math.max(0, -v / a.limit * 100))}%"></i></div>` : '';
     return `<button class="row ${nested ? 'nested' : ''}" data-action="open-acc" data-id="${a.id}">
       <div class="ic" style="background:${color}22;color:${color}">${ico(a.icon || ACC_ICON[a.type] || '👛')}</div>
@@ -1254,7 +1260,7 @@ function accCharts(a) {
   if (!ui.chartEnd) ui.chartEnd = ui.month;
   if (ui.month > ui.chartEnd) ui.chartEnd = ui.month; else if (ui.month < shiftMonth(ui.chartEnd, -11)) ui.chartEnd = shiftMonth(ui.month, 11);
   const end = ui.chartEnd, start = shiftMonth(end, -11);
-  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, viewTxs(m))}));
+  const ser = Array.from({length:12}, (_, i) => shiftMonth(end, i - 11)).map(m => ({m, ...accFlow(a.id, viewTxs(m).filter(t => !t.prov))}));
   const maxV = Math.max(1, ...ser.map(x => Math.max(x.inn, x.out)));
   const act = ser.filter(x => x.inn > 0.004 || x.out > 0.004), n = act.length || 1;
   const ai = act.reduce((s, x) => s + x.inn, 0) / n, ao = act.reduce((s, x) => s + x.out, 0) / n;
@@ -1343,6 +1349,7 @@ function accHero(a) {
       if (c.dueNow > 0.004) h += `<button class="hero-btn" data-action="pay-card" data-id="${a.id}" data-amt="${c.dueNow}">Borcu öde</button>`;
     } else h += `<button class="hero-hint" data-action="edit-acc" data-id="${a.id}">Kesim ve son ödeme günlerini ekle →</button>`;
     if (fut) h += `<div class="label" style="margin-top:12px">Gelecek taksitler toplamı: ${money(Math.abs(fut))}</div>`;
+    if (D.prov.get(a.id)) h += `<div class="label" style="margin-top:${fut ? 4 : 12}px">Provizyonda: ${money(D.prov.get(a.id))} · bakiyeye dahil değil</div>`;
   } else if (fut) h += `<div class="label">Planlı işlemler: ${money(fut)}</div>`;
   return h + '</section>';
 }
@@ -1356,6 +1363,8 @@ function renderTxList() {
     }).sort(txSort);
   } else list = [...viewTxs(ui.month), ...upcomingIn(ui.month, viewRange(ui.month))].sort(txSort);
   if (ui.accFilter) list = list.filter(t => t.accountId === ui.accFilter || t.toAccountId === ui.accFilter);
+  const provList = ui.accFilter && !q && !ui.catFilter && ui.noteFilter == null ? S.txs.filter(t => t.prov && t.accountId === ui.accFilter).sort(txSort) : [];
+  if (provList.length) list = list.filter(t => !t.prov);
   // a linked category (Kredi, Yatırım, Borç) shows its income and expense side together, with the net
   const lk = ui.catFilter && linkOf(ui.catFilter);
   if (ui.catFilter || ui.noteFilter != null) list = list.filter(filterMatch);
@@ -1370,7 +1379,12 @@ function renderTxList() {
     let inc = 0, exp = 0; for (const t of list) { if (t.v) continue; if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount; }
     sum = `<div class="link-sum"><span>Gelir<b class="num pos">${money(inc, false)}</b></span><span>Gider<b class="num neg">${money(exp, false)}</b></span><span>Fark<b class="num ${inc - exp >= 0 ? 'pos' : 'neg'}">${inc - exp >= 0 ? '+' : '−'}${money(Math.abs(inc - exp), false)}</b></span></div>`;
   }
+  if (provList.length) sum = `<div class="sec-title">Provizyonda<small class="num">${money(provList.reduce((s, t) => s + t.amount, 0), false)}</small></div>
+    <div class="list prov-list">${provList.map(t => `<div class="prov-row">${txRow(t, ui.accFilter, true)}<button class="pay-btn" data-action="prov-post" data-id="${t.id}" aria-label="${esc(t.note || D.cat.get(t.categoryId)?.name || 'İşlem')} geçmişe düşür">Düşür</button></div>`).join('')}
+    ${provList.length > 1 ? `<button class="row prov-all" data-action="prov-post-all"><div class="t"><b>Tümünü geçmişe düşür</b></div></button>` : ''}</div>
+    <p class="note">Provizyondaki harcamalar kart bakiyesine ve ekstreye eklenmez. Banka işlemi kesinleştirince "Düşür" de; harcama kendi tarihiyle geçmişe geçer.</p>` + sum;
   const total = list.length; list = list.slice(0, 400);
+  if (!list.length && provList.length) { $('#txlist').innerHTML = sum; return; }
   if (!list.length) { $('#txlist').innerHTML = sum + `<div class="empty"><div class="big">${ICON.receipt}</div>İşlem bulunamadı</div>`; return; }
   let html = sum, day = null, buf = [];
   const flush = () => {
@@ -1719,7 +1733,8 @@ function drawTxSheet() {
     ${isAdj ? '' : `<button class="tx-icon" data-action="icon-open"><span class="ic-big" style="background:${tcol}22;color:${tcol}">${ico(shown)}</span><small>${ctx.cur ? 'Özel simge' : 'Simgeyi değiştir'}</small></button>`}
     <div class="amount">${d.type !== 'transfer' && !d.isRule ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
     <div class="form">
-      <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId">${accOptions(d.accountId)}</select></div>
+      <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId" data-redraw-tx="1">${accOptions(d.accountId)}</select></div>
+      ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Kart borcuna henüz eklenmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
       ${d.type === 'transfer' ? `<div class="field"><label>Nereye</label><select data-f="toAccountId"><option value="">Seç</option>${accOptions(d.toAccountId, a => a.id !== d.accountId)}</select></div>` : ''}
       ${d.isRule ? `
       <div class="field"><label>Sıklık</label><select data-f="freq">${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.freq === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -1748,6 +1763,10 @@ function drawTxSheet() {
   `);
   sizeAmt();
 }
+// provizyon: only for a card expense entered on its own (not installments, a repeat, a loan or a rule).
+// New card expenses start in provizyon; an existing one only if it already was.
+const provOK = d => !d.isRule && d.type === 'expense' && D.acc.get(d.accountId)?.type === 'card' && !d.loanId && !d.instGroup && !d.recurringId && !(+d.instN > 1) && !d.repeat;
+const provOn = d => d.prov ?? !!d.isNew;
 // occurrences of a repeat that fall after the transaction's date, up to today (what "Geçmişi doldur" would add)
 function backfillDates(d) {
   const t = todayStr(), date = d.date || t; if (!d.repeat || date >= t) return [];
@@ -2082,6 +2101,8 @@ const A = {
   'clear-cat'() { ui.catFilter = null; ui.noteFilter = null; render(); },
   'close-sheet': closeSheet,
   'add-tx'() { if (!S.accounts.length) { toast('Önce bir hesap ekle'); accSheet(); return; } txSheet(); },
+  'prov-post'(el) { const t = S.txs.find(x => x.id === el.dataset.id); if (!t) return; delete t.prov; save(); derive(); render(); toast(`Geçmişe düştü · ${shortDate(t.date)}`); },
+  'prov-post-all'() { const l = S.txs.filter(t => t.prov && t.accountId === ui.accFilter); if (!confirm(`${l.length} provizyon geçmişe düşürülsün mü?`)) return; for (const t of l) delete t.prov; save(); derive(); render(); toast(`${l.length} işlem geçmişe düştü`); },
   'edit-tx'(el) { txSheet(S.txs.find(t => t.id === el.dataset.id)); },
   'tx-type'(el) { sheetState.type = el.dataset.v; const c = D.cat.get(sheetState.categoryId); if (c && c.kind !== sheetState.type) { sheetState.categoryId = null; sheetState.catParent = null; } drawTxSheet(); },
   'pick-parent'(el) { sheetState.catParent = el.dataset.id; sheetState.categoryId = el.dataset.id; drawTxSheet(); },
@@ -2112,6 +2133,7 @@ const A = {
     if (d.recurringId) t.recurringId = d.recurringId;
     if (d.loanId) { t.loanId = d.loanId; if (d.inst != null) t.inst = d.inst; }
     if (d.icon && d.type !== 'adjust') t.icon = d.icon;
+    if (provOK(d) && provOn(d)) t.prov = true;
     if (d.instGroup) Object.assign(t, {instGroup:d.instGroup, instNo:d.instNo, instTotal:d.instTotal});
     const plan = !d.loanId && !d.instGroup && !d.recurringId && t.type !== 'adjust';
     if (plan && t.type === 'expense' && +d.instN > 1) {
@@ -2141,6 +2163,7 @@ const A = {
     S.meta.lastAccount = t.accountId;
     if (rule) runRecurring();
     save(); closeSheet(); render();
+    if (t.prov && !rule) return toast(d.isNew ? 'Provizyona eklendi · kartta "Geçmişe düşür" ile işlenir' : 'Güncellendi · provizyonda');
     toast(rule ? `${d.isNew ? 'İşlem eklendi' : 'Güncellendi'} · ${filled ? `${filled} geçmiş tekrar eklendi, ` : ''}${FREQ[rule.freq].toLocaleLowerCase('tr')} tekrarlanacak, sonraki ${shortDate(rule.nextDate)}` : d.isNew ? 'İşlem eklendi' : 'Güncellendi');
   },
   // copy: opens a new, prefilled transaction (not linked to any loan / installment plan / rule) on the original date or today
