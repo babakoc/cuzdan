@@ -415,6 +415,20 @@ div.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(
 div.seg button{min-height:36px;border-radius:18px;font-weight:500;font-size:var(--t-sub);color:var(--text)}
 .copy-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.copy-row .secondary{margin:0}
 html.ax .copy-row{grid-template-columns:1fr}
+.wiz-prog{display:flex;gap:6px;margin:-2px 4px 14px}.wiz-prog i{flex:1;height:4px;border-radius:2px;background:var(--chip)}.wiz-prog i.on{background:var(--accent-fill)}
+.wiz-done{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}.wiz-done .chip{gap:4px;font-weight:600}
+.wiz-q{font-size:var(--t-title2);font-weight:700;margin:6px 4px 14px}
+.wiz-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+html.ax .wiz-grid{grid-template-columns:repeat(2,1fr)}
+.wiz-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:88px;padding:10px 6px;border-radius:18px;background:var(--card);text-align:center}
+.wiz-tile.on{box-shadow:inset 0 0 0 2px var(--accent-fill)}
+.wiz-tile .wt-ic{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:22px;overflow:hidden}
+.wiz-tile .wt-name{font-size:var(--t-sub);font-weight:600;line-height:1.2;overflow-wrap:anywhere}
+.wiz-dates{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}.wiz-dates .wiz-tile{min-height:60px}
+.wiz-up{display:inline-flex;align-items:center;gap:2px;min-height:44px;color:var(--accent);font-weight:600;margin:-6px 0 6px}.wiz-up svg{width:18px;height:18px}
+#sheet .row.on{box-shadow:inset 0 0 0 2px var(--accent-fill)}.wiz-check{color:var(--accent);font-weight:700;margin-left:6px}
+.wiz-save{margin-top:6px}
+.wiz-full{display:block;margin:14px auto 0;min-height:44px;color:var(--accent);font-weight:600;font-size:var(--t-sub)}
 .theme-row{padding:8px 12px}.theme-row div.seg{margin:0;flex:1}
 div.seg button.on{background:var(--card-elev);font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.04)}
 .amount{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:10px 0 18px}
@@ -1599,6 +1613,9 @@ function openSheet(html) {
   document.body.classList.add('sheet-open'); sh.scrollTop = 0;
   sh.focus({preventScroll:true});
 }
+addEventListener('keydown', e => {
+  if (e.key === 'Enter' && sheetState && wizOn(sheetState) && e.target.id === 'f-amt') { e.preventDefault(); wizMove(1); }
+});
 addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('sheet-open')) { e.preventDefault(); closeSheet(); } });
 // selected state for toggle-style buttons (segments, filter chips, category picker, month grid) is exposed to assistive tech
 const PRESSABLE = 'div.seg button, .chips .chip, .cats .chip, .mgrid button';
@@ -1718,8 +1735,88 @@ function noteSuggestions(d) {
 }
 const noteSugHTML = d => noteSuggestions(d).map(o => `<button class="chip" data-action="pick-note" data-name="${esc(o.name)}" data-cat="${o.cat}">${(() => { const ic = noteIconFor(o.cat, o.name); return ic ? ico(ic, 'inline') + ' ' : ''; })()}${esc(o.name)}</button>`).join('');
 
+/* ---------- new transaction, one question at a time ----------
+   Tutar → Kategori → Hesap → Tarih → Not (transfer: Tutar → Nereden → Nereye → Tarih → Not).
+   Picking a category, an account or "Bugün/Dün" moves on by itself. Editing, copies and card payments
+   keep the single-screen form; "Tek ekranda göster" switches to it at any time. */
+const wizOn = d => d.isNew && !d.isRule && !d.full && d.type !== 'adjust';
+const wizSteps = d => d.type === 'transfer' ? ['amount', 'acc', 'to', 'date', 'note'] : ['amount', 'cat', 'acc', 'date', 'note'];
+const WIZ_Q = {amount:'Ne kadar?', cat:'Hangi kategori?', acc:'Hangi hesaptan?', to:'Hangi hesaba?', date:'Ne zaman?', note:'Not ve seçenekler'};
+function wizCheck(d, step) {
+  const a = parseAmount(d.amount);
+  if (step === 'amount') return d.type === 'transfer' ? (a > 0 ? '' : 'Tutar gir') : (isNaN(a) || a === 0 ? 'Tutar gir' : '');
+  if (step === 'cat') return d.categoryId ? '' : 'Kategori seç';
+  if (step === 'acc') return d.accountId ? '' : 'Hesap seç';
+  if (step === 'to') return d.toAccountId && d.toAccountId !== d.accountId ? '' : 'Hedef hesabı seç';
+  return '';
+}
+const dayName = v => v === todayStr() ? 'Bugün' : v === addDays(todayStr(), -1) ? 'Dün' : shortDate(v);
+function wizAccRows(d, field, skip) {
+  const accs = S.accounts.filter(a => ((!a.hidden && !a.deleted) || a.id === d[field]) && a.id !== skip).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  return `<div class="list">${accs.map(a => { const v = D.bal.get(a.id) || 0, on = d[field] === a.id;
+    return `<button class="row ${on ? 'on' : ''}" data-action="wiz-acc" data-f="${field}" data-id="${a.id}" aria-pressed="${on}"><div class="ic" style="background:${a.color || hashColor(a.id)}22">${ico(a.icon || ACC_ICON[a.type] || '👛')}</div>
+      <div class="t"><b>${esc(a.name)}</b><small>${ACC_TYPE_ONE[a.type] || ''}</small></div><div class="a num ${v < 0 ? '' : 'pos'}">${money(v, false)}</div>${on ? '<span class="wiz-check" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}</div>`;
+}
+function drawTxWizard() {
+  const d = sheetState, steps = wizSteps(d); d.step = Math.min(Math.max(d.step || 0, 0), steps.length - 1);
+  const step = steps[d.step], last = d.step === steps.length - 1, kind = d.type === 'income' ? 'income' : 'expense';
+  // what has been answered so far; each chip jumps back to its question
+  const c = D.cat.get(d.categoryId), amt = parseAmount(d.amount);
+  const done = steps.slice(0, d.step).map((k, i) => {
+    const label = k === 'amount' ? (isNaN(amt) ? '' : (amt < 0 ? '−' : '') + money(Math.abs(amt), false)) : k === 'cat' ? (c ? `${c.emoji ? ico(c.emoji, 'inline') + ' ' : ''}${esc(c.name)}` : '')
+      : k === 'acc' ? esc(accName(d.accountId)) : k === 'to' ? '→ ' + esc(accName(d.toAccountId)) : k === 'date' ? dayName(d.date) : '';
+    return label ? `<button class="chip" data-action="wiz-go" data-s="${i}">${label}</button>` : '';
+  }).join('');
+  let body = '';
+  if (step === 'amount') {
+    body = `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>
+      <div class="amount">${d.type !== 'transfer' ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" enterkeyhint="next" placeholder="0" value="${esc(d.amount)}" autocomplete="off" aria-label="Tutar"><span>₺</span></div>`;
+  } else if (step === 'cat') {
+    const vis = x => !x.hidden || x.id === d.categoryId;
+    const parents = S.categories.filter(x => x.kind === kind && !x.parentId && vis(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const p = d.wizParent && D.cat.get(d.wizParent);
+    const kids = p ? S.categories.filter(x => x.parentId === p.id && vis(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)) : [];
+    const tile = (x, act, label) => `<button class="wiz-tile ${d.categoryId === x.id ? 'on' : ''}" data-action="${act}" data-id="${x.id}" aria-pressed="${d.categoryId === x.id}"><span class="wt-ic" style="background:${(x.color || topCat(x.id)?.color || '#64748B')}22">${ico(x.emoji || topCat(x.id)?.emoji || '•')}</span><span class="wt-name">${esc(label || x.name)}</span></button>`;
+    body = p && kids.length
+      ? `<button class="wiz-up" data-action="wiz-up">${ICON.chevL}Tüm kategoriler</button><div class="wiz-grid">${tile(p, 'wiz-cat', `Sadece ${p.name}`)}${kids.map(k => tile(k, 'wiz-cat')).join('')}</div>`
+      : `<div class="wiz-grid">${parents.map(x => tile(x, 'wiz-parent')).join('')}</div>`;
+  } else if (step === 'acc') body = wizAccRows(d, 'accountId');
+  else if (step === 'to') body = wizAccRows(d, 'toAccountId', d.accountId);
+  else if (step === 'date') {
+    const t = todayStr(), y = addDays(t, -1);
+    body = `<div class="wiz-dates">${[[t, 'Bugün'], [y, 'Dün'], [addDays(t, -2), shortDate(addDays(t, -2))]].map(([v, l]) => `<button class="wiz-tile ${d.date === v ? 'on' : ''}" data-action="wiz-date" data-v="${v}" aria-pressed="${d.date === v}"><span class="wt-name">${l}</span></button>`).join('')}</div>
+      <div class="form"><div class="field"><label>Başka tarih</label><input type="date" data-f="date" value="${d.date}"></div></div>`;
+  } else {
+    const plan = true, back = d.repeat && !(+d.instN > 1) ? backfillDates(d) : [];
+    body = `<div class="form"><div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı" autocomplete="off" enterkeyhint="done"></div></div>
+      <div class="note-sugs" id="note-sugs">${noteSugHTML(d)}</div>
+      <div class="form">
+        ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Kart borcuna henüz eklenmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
+        ${plan && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="instN" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.instN === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
+        ${!(+d.instN > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat" data-redraw-tx="1"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
+        ${back.length ? `<div class="field"><label>Geçmişi doldur</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">${back.length} işlem eklenir</span><input type="checkbox" data-f="backfill" data-redraw-tx="1" ${d.backfill !== false ? 'checked' : ''}></div>` : ''}
+      </div>
+      ${+d.instN > 1 && d.type === 'expense' ? `<p class="note">Toplam tutarı gir. ${instPreview(d)}</p>` : ''}`;
+  }
+  openSheet(`
+    <div class="sheet-head"><button data-action="${d.step ? 'wiz-back' : 'close-sheet'}">${d.step ? 'Geri' : 'Vazgeç'}</button><h2>Yeni işlem</h2><button data-action="${last ? 'save-tx' : 'wiz-next'}" style="font-weight:700">${last ? 'Kaydet' : 'İleri'}</button></div>
+    <div class="wiz-prog" role="progressbar" aria-valuemin="1" aria-valuemax="${steps.length}" aria-valuenow="${d.step + 1}" aria-label="Adım ${d.step + 1} / ${steps.length}">${steps.map((_, i) => `<i class="${i <= d.step ? 'on' : ''}"></i>`).join('')}</div>
+    ${done ? `<div class="wiz-done">${done}</div>` : ''}
+    <h3 class="wiz-q">${WIZ_Q[step]}</h3>
+    ${body}
+    ${last ? `<button class="primary wiz-save" data-action="save-tx">Kaydet</button>` : step === 'amount' || step === 'date' ? `<button class="primary wiz-save" data-action="wiz-next">İleri</button>` : ''}
+    <button class="wiz-full" data-action="wiz-full">Tek ekranda göster</button>`);
+  if (step === 'amount') { sizeAmt(); setTimeout(() => $('#f-amt')?.focus(), 30); }
+  if (step === 'note' && !d.note) setTimeout(() => document.querySelector('#sheet [data-f="note"]')?.focus(), 30);
+}
+function wizMove(dir) {
+  const d = sheetState, steps = wizSteps(d);
+  if (dir > 0) { const err = wizCheck(d, steps[d.step]); if (err) return toast(err); }
+  d.step = (d.step || 0) + dir; drawTxWizard(); $('#sheet').scrollTop = 0;
+}
 function drawTxSheet() {
   if (sheetState.picking) return drawIconPicker();
+  if (wizOn(sheetState)) return drawTxWizard();
   const d = sheetState, kind = d.type === 'income' ? 'income' : 'expense';
   const ctx = iconCtx(), shown = ctx.cur || ctx.def, tcol = d.type === 'transfer' ? '#64748B' : (topCat(d.categoryId)?.color || '#64748B');
   const visibleCat = x => !x.hidden || x.id === d.categoryId || x.id === d.catParent;
@@ -2003,7 +2100,7 @@ const A = {
     const live = x => x && !x.deleted && !x.hidden;
     const from = live(D.acc.get(a.parentId)) ? a.parentId : S.accounts.find(x => x.type === 'bank' && live(x))?.id;
     txSheet();
-    Object.assign(sheetState, {type:'transfer', accountId:from || sheetState.accountId, toAccountId:a.id, amount:String(amt).replace('.', ','), note:`${a.name} ekstre ödemesi`, categoryId:null, catParent:null});
+    Object.assign(sheetState, {full:true, type:'transfer', accountId:from || sheetState.accountId, toAccountId:a.id, amount:String(amt).replace('.', ','), note:`${a.name} ekstre ödemesi`, categoryId:null, catParent:null});
     drawTxSheet();
   },
   tab(el, e) { e?.preventDefault(); if (el.closest('nav.tabs')) ui.stack = []; if (el.dataset.tab !== ui.tab) ui.prevTab = ui.tab; ui.tab = el.dataset.tab; if (ui.tab !== 'txs') { ui.accFilter = null; ui.catFilter = null; ui.noteFilter = null; } ui.q = ''; render(); window.scrollTo(0, 0); },
@@ -2106,6 +2203,19 @@ const A = {
   'prov-post'(el) { const t = S.txs.find(x => x.id === el.dataset.id); if (!t) return; delete t.prov; save(); derive(); render(); toast(`Geçmişe düştü · ${shortDate(t.date)}`); },
   'prov-post-all'() { const l = S.txs.filter(t => t.prov && t.accountId === ui.accFilter); if (!confirm(`${l.length} provizyon geçmişe düşürülsün mü?`)) return; for (const t of l) delete t.prov; save(); derive(); render(); toast(`${l.length} işlem geçmişe düştü`); },
   'edit-tx'(el) { txSheet(S.txs.find(t => t.id === el.dataset.id)); },
+  'wiz-next'() { wizMove(1); },
+  'wiz-back'() { wizMove(-1); },
+  'wiz-go'(el) { sheetState.step = +el.dataset.s; drawTxWizard(); },
+  'wiz-full'() { sheetState.full = true; drawTxSheet(); $('#sheet').scrollTop = 0; },
+  'wiz-parent'(el) {
+    const d = sheetState, id = el.dataset.id;
+    if (S.categories.some(x => x.parentId === id && !x.hidden)) { d.wizParent = id; drawTxWizard(); $('#sheet').scrollTop = 0; return; }
+    d.categoryId = id; d.catParent = id; wizMove(1);
+  },
+  'wiz-up'() { sheetState.wizParent = null; drawTxWizard(); },
+  'wiz-cat'(el) { const d = sheetState, c = D.cat.get(el.dataset.id); d.categoryId = c.id; d.catParent = c.parentId && D.cat.get(c.parentId) ? c.parentId : c.id; wizMove(1); },
+  'wiz-acc'(el) { sheetState[el.dataset.f] = el.dataset.id; if (el.dataset.f === 'accountId' && sheetState.toAccountId === el.dataset.id) sheetState.toAccountId = null; wizMove(1); },
+  'wiz-date'(el) { sheetState.date = el.dataset.v; wizMove(1); },
   'tx-type'(el) { sheetState.type = el.dataset.v; const c = D.cat.get(sheetState.categoryId); if (c && c.kind !== sheetState.type) { sheetState.categoryId = null; sheetState.catParent = null; } drawTxSheet(); },
   'pick-parent'(el) { sheetState.catParent = el.dataset.id; sheetState.categoryId = el.dataset.id; drawTxSheet(); },
   'pick-note'(el) {
@@ -2172,7 +2282,7 @@ const A = {
   'copy-tx'(el) {
     const d = sheetState, date = el.dataset.when === 'today' ? todayStr() : d.date;
     sheetState = {id:uid(), type:d.type, amount:d.amount, accountId:d.accountId, toAccountId:d.toAccountId, categoryId:d.categoryId, catParent:d.catParent,
-      date, note:d.note || '', memo:d.memo || '', icon:d.icon || null, isNew:true, isCopy:true};
+      date, note:d.note || '', memo:d.memo || '', icon:d.icon || null, isNew:true, isCopy:true, full:true};
     drawTxSheet(); $('#sheet').scrollTop = 0; toast(`Kopya · ${shortDate(date)} · kaydetmeden önce düzenleyebilirsin`);
   },
   'del-tx'() {
