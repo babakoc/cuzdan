@@ -704,7 +704,65 @@ function drawCropper() {
 }
 let S = emptyState();
 let saveTimer;
-function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => DB.set('state', S).catch(e => toast('Kaydedilemedi: ' + e.message)), 150); }
+function save() { clearTimeout(saveTimer); saveTimer = setTimeout(() => DB.set('state', S).then(syncSoon).catch(e => toast('Kaydedilemedi: ' + e.message)), 150); }
+
+/* ---------- sync: a copy of all data in the user's own private GitHub repo ----------
+   After every change (8 s quiet) the whole state is written to cuzdan.json there, so it can be read from a computer
+   and the repo's history doubles as an automatic backup. One way only: this phone is the source.
+   The token lives in this browser's localStorage, never in S, so it is in neither backups nor the synced file. */
+const SYNC_KEY = 'cz-sync', SYNC_PATH = 'cuzdan.json';
+function syncCfg() { try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || null; } catch { return null; } }
+function syncSet(c) { try { c ? localStorage.setItem(SYNC_KEY, JSON.stringify(c)) : localStorage.removeItem(SYNC_KEY); } catch {} }
+let syncTimer, syncBusy = false, syncAgain = false;
+function syncSoon(delay = 8000) {
+  const c = syncCfg(); if (!c?.token) return;
+  if (!c.dirty) { c.dirty = true; syncSet(c); } // survives the app being closed before the upload
+  clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, delay);
+}
+// one line per transaction / account / category: small, readable diffs in the repo history
+const syncText = () => '{\n' + Object.entries(S).map(([k, v]) => JSON.stringify(k) + ':' + (Array.isArray(v) ? '[\n' + v.map(x => JSON.stringify(x)).join(',\n') + '\n]' : JSON.stringify(v))).join(',\n') + '\n}\n';
+const b64 = str => { const b = new TextEncoder().encode(str); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+const ghErr = st => st === 401 ? 'Anahtar geçersiz ya da süresi dolmuş' : st === 403 ? 'Anahtarın bu depoya yazma izni yok' : st === 404 ? 'Depo bulunamadı ya da anahtar ona erişemiyor' : `GitHub hatası (${st})`;
+async function syncNow() {
+  clearTimeout(syncTimer);
+  const c = syncCfg(); if (!c?.token || !c.repo) return false;
+  if (syncBusy) { syncAgain = true; return false; }
+  syncBusy = true;
+  const url = `https://api.github.com/repos/${c.repo}/contents/${SYNC_PATH}`, h = {Authorization:`Bearer ${c.token}`, Accept:'application/vnd.github+json'};
+  try {
+    for (let k = 0; k < 2; k++) {
+      if (!c.sha) { const r = await fetch(url + '?t=' + Date.now(), {headers:h, cache:'no-store'}); if (r.ok) c.sha = (await r.json()).sha; else if (r.status !== 404) throw new Error(ghErr(r.status)); }
+      const r = await fetch(url, {method:'PUT', headers:h, body:JSON.stringify({message:`Eşitleme · ${S.txs.length} işlem`, content:b64(syncText()), ...(c.sha ? {sha:c.sha} : {})})});
+      if (r.ok) { Object.assign(c, {sha:(await r.json()).content.sha, last:Date.now(), err:'', dirty:false}); syncSet(c); return true; }
+      if ((r.status === 409 || r.status === 422) && k === 0) { c.sha = null; continue; } // the file changed elsewhere: take its new version id and retry
+      throw new Error(ghErr(r.status));
+    }
+  } catch (e) { c.err = /fetch|network|load/i.test(e.message) ? 'İnternet yok, bağlanınca tekrar denenecek' : e.message; syncSet(c); return false; }
+  finally { syncBusy = false; if (syncAgain) { syncAgain = false; syncSoon(1000); } const el = $('#sync-info'); if (el) el.textContent = syncLine(); }
+  return false;
+}
+const ago = t => { const m = Math.round((Date.now() - t) / 6e4); return m < 1 ? 'az önce' : m < 60 ? `${m} dk önce` : new Date(t).toLocaleString('tr-TR', {dateStyle:'medium', timeStyle:'short'}); };
+function syncLine() {
+  const c = syncCfg(); if (!c?.token) return 'Kapalı · verilerin GitHub\'daki gizli deponda otomatik kopyası';
+  if (c.err) return `${c.repo} · ${c.err}`;
+  return `${c.repo} · ${c.last ? 'son eşitleme ' + ago(c.last) : 'henüz eşitlenmedi'}${c.dirty && c.last ? ' · bekleyen değişiklik var' : ''}`;
+}
+function syncSheet() {
+  const c = syncCfg() || {}, owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
+  sheetState = {isSync:true, repo:c.repo || (owner ? `${owner}/cuzdan-veri` : ''), token:'', has:!!c.token};
+  drawSyncSheet();
+}
+function drawSyncSheet() {
+  const d = sheetState;
+  openSheet(`
+    <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>Eşitleme</h2><button data-action="save-sync" style="font-weight:700">Kaydet</button></div>
+    <div class="form">
+      <div class="field"><label>Depo</label><input data-f="repo" value="${esc(d.repo)}" placeholder="kullanıcı/depo" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="field"><label>Anahtar</label><input data-f="token" type="password" value="" placeholder="${d.has ? 'Kayıtlı · değiştirmek için yapıştır' : 'github_pat_…'}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+    </div>
+    ${d.has ? `<p class="note" id="sync-info">${esc(syncLine())}</p><button class="secondary" data-action="sync-now">Şimdi eşitle</button><button class="secondary danger" data-action="sync-off">Eşitlemeyi kapat</button>` : ''}
+    <p class="note">Her değişiklikten birkaç saniye sonra tüm veriler bu depoya <b>cuzdan.json</b> olarak yazılır; deponun geçmişi aynı zamanda otomatik yedektir. Eşitleme tek yönlüdür: telefondaki veri esastır. Anahtar yalnızca bu cihazda saklanır, yedeklere ve depoya yazılmaz.</p>`);
+}
 
 /* ---------- derived data ---------- */
 let D = null; // cache, rebuilt on change
@@ -1606,6 +1664,8 @@ VIEWS.settings = () => {
     <button class="row" data-action="manage-cats"><div class="ic" style="background:#8E4EC622">🏷️</div><div class="t"><b>Kategoriler</b><small>Ekle, yeniden adlandır, gizle</small></div>${ICON.rowChev}</button>
     <button class="row" data-action="add-acc"><div class="ic" style="background:#4C5BFF22">🏦</div><div class="t"><b>Yeni hesap</b><small>Banka, kart, nakit, kredi…</small></div>${ICON.rowChev}</button>
   </div>
+  <div class="sec-title">Eşitleme</div>
+  <div class="list" style="margin-bottom:10px"><button class="row" data-action="sync-open"><div class="ic" style="background:#24292F22">🔄</div><div class="t"><b>GitHub'a eşitle</b><small id="sync-info">${esc(syncLine())}</small></div>${ICON.rowChev}</button></div>
   <div class="sec-title">Yedekleme</div>
   <div class="list" style="margin-bottom:10px"><div class="row"><div class="ic" style="background:#64748B22">💾</div><div class="t"><b>Bu cihazdaki veriler</b><small id="storage-info">kontrol ediliyor…</small></div>
     <button id="persist-btn" class="pay-btn" data-action="ask-persist" style="display:none">Kalıcı yap</button></div></div>
@@ -2388,6 +2448,17 @@ const A = {
   'import-mm'() { $('#file-mm').click(); },
   'import-json'() { $('#file-json').click(); },
   'export-json'() { exportJSON(); },
+  'sync-open'() { syncSheet(); },
+  async 'save-sync'() {
+    const d = sheetState, old = syncCfg() || {}, repo = (d.repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$|\/$/g, ''), token = (d.token || '').trim() || old.token;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast('Depoyu kullanıcı/depo biçiminde yaz');
+    if (!token) return toast('Anahtarı yapıştır');
+    syncSet({repo, token, sha:old.repo === repo ? old.sha : null, last:old.repo === repo ? old.last : 0, dirty:true});
+    closeSheet(); toast('Eşitleniyor…');
+    const ok = await syncNow(); render(); toast(ok ? 'Eşitlendi ✓' : 'Eşitlenemedi: ' + syncCfg().err);
+  },
+  async 'sync-now'() { toast('Eşitleniyor…'); const ok = await syncNow(); toast(ok ? 'Eşitlendi ✓' : 'Eşitlenemedi: ' + syncCfg().err); },
+  'sync-off'() { if (!confirm('Eşitleme kapatılsın mı? Depodaki kopya yerinde kalır, anahtar bu cihazdan silinir.')) return; syncSet(null); closeSheet(); render(); toast('Eşitleme kapatıldı'); },
   'start-fresh'() { seedDefaults(); save(); ui.tab = 'home'; render(); toast('Hesaplar ve kategoriler hazır, Ayarlar\'dan düzenleyebilirsin'); },
   'wipe'() { if (!confirm('Tüm hesaplar, kategoriler ve işlemler bu cihazdan kalıcı olarak silinecek. Önce yedek almanı öneririm. Devam edilsin mi?')) return; S = emptyState(); save(); ui.tab = 'home'; render(); toast('Tüm veriler silindi'); }
 };
@@ -2453,6 +2524,7 @@ const fmtBytes = b => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB
 function backupBanner() {
   if (!S.txs.length) return '';
   const DAY = 864e5, now = Date.now(), last = S.meta.lastBackup || 0;
+  const sc = syncCfg(); if (sc?.last && !sc.err && now - sc.last < 7 * DAY) return ''; // the synced repo is the backup
   if (now - last < 7 * DAY || now - (S.meta.backupSnooze || 0) < DAY) return '';
   const days = last ? Math.floor((now - last) / DAY) : null;
   return `<section class="backup-banner"><div class="bb-ic">${ICON.cloud}</div><div class="bb-t"><b>Yedek almayı unutma</b><small>${days == null ? 'Henüz hiç yedek almadın.' : `Son yedek ${days} gün önce.`} Veriler yalnızca bu telefonda duruyor.</small></div>
@@ -2607,8 +2679,11 @@ window.addEventListener('popstate', () => { if (sheetState) closeSheet(); goBack
   if (n) toast(`${n} tekrarlayan işlem eklendi`);
   if (nl) toast(`${nl} kredi taksiti otomatik ödendi`);
   // a PWA can stay open for days: re-check due items whenever it comes back to the foreground
+  if (syncCfg()?.dirty) syncSoon(2000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || sheetState) return;
+    if (document.visibilityState === 'hidden') { if (syncCfg()?.dirty) syncNow(); return; }
+    if (syncCfg()?.dirty) syncSoon(2000);
+    if (sheetState) return;
     const k = runRecurring() + runLoans();
     if (k || D?.today !== todayStr()) render();
     if (k) toast(`${k} tekrarlayan işlem eklendi`);

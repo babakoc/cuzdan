@@ -1,4 +1,4 @@
-const CACHE = 'cuzdan-v48';
+const CACHE = 'cuzdan-v49';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));
@@ -10,7 +10,7 @@ self.addEventListener('activate', e => {
 });
 // Network first, cache fallback: updates show up when online, app still opens offline.
 self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
+  if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return; // never cache API calls (sync)
   e.respondWith(
     fetch(e.request).then(r => {
       const copy = r.clone();
