@@ -7,8 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Cüzdan">
-<meta name="theme-color" content="#F3F5F9" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#070B14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B0D11" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="manifest" href="manifest.json">
 <title>Cüzdan</title>
@@ -482,6 +482,91 @@ details.hidden-accs summary::-webkit-details-marker{display:none}
   #toast.on{opacity:1}
   nav.tabs button:active,.fab:active{transform:none}
 }
+
+
+/* ===== Sade tema: şeffaf yüzeyler, ince çizgiler, gölgesiz, tek vurgu rengi, bol boşluk ===== */
+:root{
+  --bg:#FFFFFF; --card:transparent; --card2:#F7F8FA; --card-elev:#FFFFFF; --sheet:#FFFFFF;
+  --text:#0E1116; --muted:#5F6672; --muted2:#9AA0AA; --line:rgba(14,17,22,.09); --chip:rgba(14,17,22,.045);
+  --accent:#1F5FD6; --accent-fill:#2463EB;
+  --pos:#0B7A4B; --neg:#C22B2B; --pos-fill:#22A06B; --neg-fill:#E5484D;
+  --card-shadow:none; --hair:1px solid var(--line);
+  --glass:rgba(255,255,255,.72); --glass-hi:rgba(255,255,255,.9); --glass-edge:rgba(14,17,22,.08);
+  --glass-shadow:0 4px 18px rgba(14,17,22,.06);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){--bg:#0B0D11; --card:transparent; --card2:#15181E; --card-elev:#15181E; --sheet:#101318;
+    --text:#ECEEF2; --muted:#9BA2AE; --muted2:#6B7280; --line:rgba(236,238,242,.10); --chip:rgba(236,238,242,.06);
+    --accent:#7DA6FF; --accent-fill:#3B6CF6; --pos:#4ADE9B; --neg:#FF8A8A; --pos-fill:#22A06B; --neg-fill:#E5484D;
+    --glass:rgba(16,19,24,.66); --glass-hi:rgba(255,255,255,.06); --glass-edge:rgba(255,255,255,.10); --glass-shadow:0 4px 18px rgba(0,0,0,.35)}
+}
+:root[data-theme=dark]{--bg:#0B0D11; --card:transparent; --card2:#15181E; --card-elev:#15181E; --sheet:#101318;
+  --text:#ECEEF2; --muted:#9BA2AE; --muted2:#6B7280; --line:rgba(236,238,242,.10); --chip:rgba(236,238,242,.06);
+  --accent:#7DA6FF; --accent-fill:#3B6CF6; --pos:#4ADE9B; --neg:#FF8A8A; --pos-fill:#22A06B; --neg-fill:#E5484D;
+  --glass:rgba(16,19,24,.66); --glass-hi:rgba(255,255,255,.06); --glass-edge:rgba(255,255,255,.10); --glass-shadow:0 4px 18px rgba(0,0,0,.35)}
+@media (prefers-contrast:more){:root{--line:rgba(14,17,22,.3)}}
+
+/* surfaces: no fill, hairline outline */
+.card,.list,.flow-card,.form,.tile,.backup-banner,.link-sum span,.mgrid button{background:transparent;border:var(--hair);box-shadow:none}
+.card,.flow-card{margin-top:20px;padding:18px}
+.list{border-radius:20px}
+#sheet{--card:transparent;box-shadow:0 -1px 0 var(--line)}
+.sec-title{margin-top:32px;font-weight:600;font-size:var(--t-callout);color:var(--muted);letter-spacing:.01em}
+.card h3,.card-head h3{font-weight:600}
+header.big h1{font-weight:650;letter-spacing:-.01em}
+
+/* hero: plain number on the page, no gradient */
+.hero{background:none;color:var(--text);box-shadow:none;border-radius:0;padding:6px 2px 4px}
+.hero .label{color:var(--muted);font-weight:500}
+.hero .big-amt{font-weight:300;letter-spacing:-.02em;margin:0 0 14px}
+.hero .big-amt small{color:var(--muted);font-weight:300}
+.hero-split{height:3px;border-radius:2px;gap:2px;margin:0 0 14px;background:var(--chip)}
+.hero-split .as{background:var(--pos-fill)}.hero-split .db{background:var(--neg-fill)}
+.hero-row{gap:0;border-top:var(--hair)}
+.hero-row div{background:none;border-radius:0;padding:12px 0 2px}
+.hero-row div+div{padding-left:16px;border-left:var(--hair)}
+.hero-row span{color:var(--muted)}
+.hero-row div:first-child .k::before{background:var(--pos-fill)}
+.hero-row div:last-child .k::before{background:var(--neg-fill)}
+.hero-row b{font-weight:500}
+.hero-row b+span{color:var(--muted)}
+.hero-row em.late{color:var(--neg)}
+.hero-btn{background:transparent;color:var(--accent);border:1px solid var(--accent-fill)}
+.hero-hint{color:var(--accent)}
+.bbar.big{height:4px;background:var(--chip)}
+.hero .bbar em{background:var(--text)}
+
+/* period card */
+.flow-ic{background:none !important;border:var(--hair)}
+.flow-top b,.flow-net b,.dist-total b{font-weight:500}
+.save-bar{height:3px;border-radius:2px}
+.flow-net{border-top:var(--hair)}
+
+/* distribution */
+.stack{height:6px;border-radius:3px;gap:1px}
+.dist .ic{background:none !important;width:28px;height:28px;font-size:17px}
+.dist .bar{height:2px}
+.dist .r{padding:10px 0}
+.dist .r+.r{border-top:var(--hair)}
+.dist .v{font-weight:500}
+
+/* controls: outlines instead of fills */
+.month .mlabel,.month span{background:transparent;border:var(--hair)}
+.to-today button,.chip,.secondary,.backup-banner .bb-actions button,.row-actions button,.custom-emoji button{background:transparent;box-shadow:inset 0 0 0 1px var(--line)}
+.chip.on,.backup-banner .bb-actions button.on,.row-actions button.on{background:var(--accent-fill);box-shadow:none}
+.search{background:transparent;box-shadow:inset 0 0 0 1px var(--line)}
+div.seg{background:transparent;box-shadow:inset 0 0 0 1px var(--line)}
+div.seg button.on{box-shadow:inset 0 0 0 1px var(--line);background:var(--chip)}
+.ic{background-color:transparent !important;box-shadow:inset 0 0 0 1px var(--line)}
+.backup-banner .bb-ic{background:none;border:var(--hair)}
+.empty .big{background:none;border:var(--hair)}
+.bbar,.meter,.pbar{height:3px}
+nav.tabs button.on{background:transparent}
+.fab{box-shadow:0 6px 16px color-mix(in srgb,var(--accent-fill) 30%,transparent)}
+.chart-nav{background:transparent;box-shadow:inset 0 0 0 1px var(--line)}
+.bars .col{max-width:18px;gap:2px}
+.bars .col i{border-radius:3px 3px 1px 1px}
+.bars.b12 .col{max-width:14px}
 
 /* Accessibility text sizes: wrap instead of truncating, stack horizontal layouts */
 html.ax .row .t b,html.ax .row .t small,html.ax .legend .n,html.ax .tile b,html.ax .cat-meta b,html.ax .link-sum b{white-space:normal;overflow:visible}
@@ -1584,7 +1669,7 @@ function applyTheme(t){
   const r = document.documentElement;
   if (t === 'light' || t === 'dark') r.dataset.theme = t; else delete r.dataset.theme;
   const dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelectorAll('meta[name=theme-color]').forEach(m => { m.content = dark ? '#070B14' : '#F3F5F9'; });
+  document.querySelectorAll('meta[name=theme-color]').forEach(m => { m.content = dark ? '#0B0D11' : '#FFFFFF'; });
 }
 applyTheme(themePref());
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme(themePref()));
