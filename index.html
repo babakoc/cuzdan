@@ -1115,7 +1115,7 @@ function txRow(t, ctxAcc, withDate) {
   const planned = (t.prov ? '' : '') + (t.type === 'expense' && t.amount < 0 ? '<span class="badge">İade</span>' : '') + (t.recurringId ? '<span class="badge">🔁</span>' : '');
   return `<button class="row${t.prov ? ' prov' : ''}" data-action="edit-tx" data-id="${t.id}">
     <div class="ic" style="background:${color}22;color:${color}">${ico(icon)}</div>
-    <div class="t"><b>${esc(title)}${planned}</b>${t.prov ? `<small class="prov-tag">${ICON.clock}Provizyonda</small>` : ''}${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
+    <div class="t"><b>${esc(title)}${planned}</b>${t.prov ? `<small class="prov-tag">${ICON.clock}Provizyonda${t.provInst > 1 ? ` · ${t.provInst} taksit` : ''}</small>` : ''}${t.note && t.type !== 'adjust' ? `<small class="tx-note">${esc(t.note)}</small>` : ''}<small>${withDate ? `<span class="tx-date">${esc(shortRel(t.date))}</span> · ` : ''}${esc(sub)}</small></div>
     <div class="a num ${t.prov ? 'prov-amt' : cls}">${amt}${t.prov ? '<small>beklemede</small>' : ''}</div></button>`;
 }
 
@@ -1807,6 +1807,7 @@ function txSheet(t) {
   const lastAcc = ui.tab === 'txs' && ui.accFilter && D.acc.get(ui.accFilter) ? ui.accFilter : defaultAcc();
   sheetState = t ? {...t, isNew:false} : {id:uid(), type:'expense', amount:'', accountId:lastAcc, toAccountId:null, categoryId:null, date:todayStr(), note:'', isNew:true};
   if (typeof sheetState.amount === 'number') sheetState.amount = String(sheetState.amount).replace('.', ',');
+  if (t?.provInst > 1) sheetState.instN = String(t.provInst);
   const c = D.cat.get(sheetState.categoryId);
   sheetState.catParent = c ? (c.parentId && D.cat.get(c.parentId) ? c.parentId : c.id) : null;
   drawTxSheet();
@@ -1924,7 +1925,7 @@ function drawTxWizard() {
     body = `<div class="form"><div class="field"><label>Not</label><input data-f="note" value="${esc(d.note)}" placeholder="İsteğe bağlı" autocomplete="off" enterkeyhint="done"></div></div>
       <div class="note-sugs" id="note-sugs">${noteSugHTML(d)}</div>
       <div class="form">
-        ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
+        ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" data-redraw-tx="1" ${provOn(d) ? 'checked' : ''}></div>` : ''}
         ${plan && d.type === 'expense' ? `<div class="field"><label>Taksit</label><select data-f="instN" data-redraw-tx="1"><option value="">Tek çekim</option>${[2,3,4,5,6,7,8,9,10,11,12,15,18,24,36].map(n => `<option value="${n}" ${+d.instN === n ? 'selected' : ''}>${n} taksit</option>`).join('')}</select></div>` : ''}
         ${!(+d.instN > 1) ? `<div class="field"><label>Tekrar</label><select data-f="repeat" data-redraw-tx="1"><option value="">Tekrarlama</option>${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.repeat === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
         ${back.length ? `<div class="field"><label>Geçmişi doldur</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">${back.length} işlem eklenir</span><input type="checkbox" data-f="backfill" data-redraw-tx="1" ${d.backfill !== false ? 'checked' : ''}></div>` : ''}
@@ -1968,7 +1969,7 @@ function drawTxSheet() {
     ${keypadHTML(d.kp ?? d.isNew)}
     <div class="form">
       <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId" data-redraw-tx="1">${accOptions(d.accountId)}</select></div>
-      ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
+      ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" data-redraw-tx="1" ${provOn(d) ? 'checked' : ''}></div>` : ''}
       ${d.type === 'transfer' ? `<div class="field"><label>Nereye</label><select data-f="toAccountId"><option value="">Seç</option>${accOptions(d.toAccountId, a => a.id !== d.accountId)}</select></div>` : ''}
       ${d.isRule ? `
       <div class="field"><label>Sıklık</label><select data-f="freq">${Object.entries(FREQ).map(([k, l]) => `<option value="${k}" ${d.freq === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -1998,9 +1999,23 @@ function drawTxSheet() {
   `);
   sizeAmt();
 }
-// provizyon: only for a card expense entered on its own (not installments, a repeat, a loan or a rule).
-// New card expenses start in provizyon; an existing one only if it already was.
-const provOK = d => !d.isRule && d.type === 'expense' && D.acc.get(d.accountId)?.type === 'card' && !d.loanId && !d.instGroup && !d.recurringId && !(+d.instN > 1) && !d.repeat;
+// provizyon: only for a card expense entered on its own or as a new installment plan (not a repeat, a loan or a rule).
+// New card expenses start in provizyon; an existing one only if it already was. An installment purchase waits in
+// provizyon as one full-amount row (provInst = number of installments) and is split when it is posted.
+const provOK = d => !d.isRule && d.type === 'expense' && D.acc.get(d.accountId)?.type === 'card' && !d.loanId && !d.instGroup && !d.recurringId && !d.repeat;
+// splits an expense into n monthly installments from its date; the first one keeps its id
+function instSplit(t, n) {
+  const parts = splitInst(t.amount, n), group = uid(), [y, m, dd] = t.date.split('-').map(Number), base = {...t};
+  delete base.prov; delete base.provInst;
+  for (let k = 0; k < n; k++) S.txs.push({...base, id:k === 0 ? t.id : uid(), amount:parts[k], date:mkDate(y, m + k, dd), ts:t.ts + k,
+    note:`${t.note ? t.note + ' ' : ''}(${k + 1}/${n})`, instGroup:group, instNo:k + 1, instTotal:n});
+  return parts;
+}
+// a provizyon leaves the pending list: a plain one keeps its date, an installment one becomes its installments
+function provPost(t) {
+  if (t.provInst > 1) { S.txs = S.txs.filter(x => x !== t); instSplit(t, t.provInst); }
+  else delete t.prov;
+}
 const provOn = d => d.prov ?? !!d.isNew;
 // occurrences of a repeat that fall after the transaction's date, up to today (what "Geçmişi doldur" would add)
 function backfillDates(d) {
@@ -2014,7 +2029,7 @@ function splitInst(total, n) { const base = Math.floor(total / n * 100) / 100; r
 function instPreview(d) {
   const total = Math.abs(parseAmount(d.amount)), n = +d.instN; if (!(total > 0)) return `${n} aya bölünür; her ay aynı gün bir taksit eklenir.`;
   const parts = splitInst(total, n), [y, m, dd] = (d.date || todayStr()).split('-').map(Number);
-  return `${n} × ${money(parts[0])}${parts[n - 1] !== parts[0] ? ` (son taksit ${money(parts[n - 1])})` : ''} · son taksit ${parseD(mkDate(y, m + n - 1, dd)).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}`;
+  return `${n} × ${money(parts[0])}${parts[n - 1] !== parts[0] ? ` (son taksit ${money(parts[n - 1])})` : ''} · son taksit ${parseD(mkDate(y, m + n - 1, dd)).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}${provOK(d) && provOn(d) ? '. Önce tam tutar provizyona düşer; "Düşür" deyince taksitlere bölünür.' : ''}`;
 }
 // calculator keypad under the amount: always there in the wizard, in the form while the amount is being edited
 const KP = [['C', 'clr', 'Temizle'], ['÷', 'op', 'Bölü'], ['×', 'op', 'Çarpı'], ['⌫', 'del', 'Sil'], ['7'], ['8'], ['9'], ['−', 'op', 'Eksi'], ['4'], ['5'], ['6'], ['+', 'op', 'Artı'],
@@ -2370,8 +2385,8 @@ const A = {
   'clear-cat'() { ui.catFilter = null; ui.noteFilter = null; render(); },
   'close-sheet': closeSheet,
   'add-tx'() { if (!S.accounts.length) { toast('Önce bir hesap ekle'); accSheet(); return; } txSheet(); },
-  'prov-post'(el) { const t = S.txs.find(x => x.id === el.dataset.id); if (!t) return; delete t.prov; save(); derive(); render(); toast(`Geçmişe düştü · ${shortDate(t.date)}`); },
-  'prov-post-all'() { const l = S.txs.filter(t => t.prov && t.accountId === ui.accFilter); if (!confirm(`${l.length} provizyon geçmişe düşürülsün mü?`)) return; for (const t of l) delete t.prov; save(); derive(); render(); toast(`${l.length} işlem geçmişe düştü`); },
+  'prov-post'(el) { const t = S.txs.find(x => x.id === el.dataset.id); if (!t) return; const n = t.provInst; provPost(t); save(); derive(); render(); toast(n > 1 ? `${n} taksite bölündü · ilki ${shortDate(t.date)}` : `Geçmişe düştü · ${shortDate(t.date)}`); },
+  'prov-post-all'() { const l = S.txs.filter(t => t.prov && t.accountId === ui.accFilter); if (!confirm(`${l.length} provizyon geçmişe düşürülsün mü?`)) return; for (const t of l) provPost(t); save(); derive(); render(); toast(`${l.length} işlem geçmişe düştü`); },
   'edit-tx'(el) { txSheet(S.txs.find(t => t.id === el.dataset.id)); },
   'wiz-next'() { wizMove(1); },
   'wiz-back'() { wizMove(-1); },
@@ -2420,11 +2435,13 @@ const A = {
     const plan = !d.loanId && !d.instGroup && !d.recurringId && t.type !== 'adjust';
     if (plan && t.type === 'expense' && +d.instN > 1) {
       if (!(t.amount > 0)) return toast('Taksitli işlemde tutar pozitif olmalı');
-      if (!d.isNew) S.txs = S.txs.filter(x => x.id !== t.id); // the edited transaction becomes installment 1
-      const n = +d.instN, parts = splitInst(t.amount, n), group = uid(), [y, m, dd] = t.date.split('-').map(Number);
-      for (let k = 0; k < n; k++) S.txs.push({...t, id:k === 0 ? t.id : uid(), amount:parts[k], date:mkDate(y, m + k, dd), ts:t.ts + k,
-        note:`${t.note ? t.note + ' ' : ''}(${k + 1}/${n})`, instGroup:group, instNo:k + 1, instTotal:n});
-      S.meta.lastAccount = t.accountId;
+      if (!d.isNew) S.txs = S.txs.filter(x => x.id !== t.id); // the edited transaction becomes installment 1 (or the provizyon row)
+      const n = +d.instN; S.meta.lastAccount = t.accountId;
+      if (t.prov) { // full amount waits in provizyon; posting it splits it into the installments
+        S.txs.push({...t, provInst:n}); save(); closeSheet(); render();
+        return toast(`Provizyona eklendi · düşürünce ${n} taksite bölünür (aylık ${money(splitInst(t.amount, n)[0])})`);
+      }
+      const parts = instSplit(t, n);
       save(); closeSheet(); render(); toast(`${n} taksit eklendi · aylık ${money(parts[0])}`);
       return;
     }
