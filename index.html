@@ -446,6 +446,15 @@ div.seg button.on{background:var(--card-elev);font-weight:600;box-shadow:0 2px 8
 .note-sugs::-webkit-scrollbar{display:none}
 .note-sugs .chip{gap:4px}
 .amount span{font-size:var(--t-title1);color:var(--muted);font-weight:600}
+.amt-res{text-align:center;color:var(--muted);font-size:var(--t-sub);margin:-12px 0 12px;min-height:1.3em;font-variant-numeric:tabular-nums}
+.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:0 0 14px}
+.keypad[hidden]{display:none}
+.keypad button{min-height:52px;border-radius:14px;background:var(--card);box-shadow:inset 0 0 0 .5px var(--sep);font-size:var(--t-title3);font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+.keypad button:active{background:var(--chip)}
+.keypad .op{background:var(--chip);color:var(--accent)}
+.keypad .eq{grid-row:span 2;background:var(--accent-fill);color:var(--on-accent)}
+.keypad .zero{grid-column:span 2}
+.q-scope{margin-top:-4px}
 .form{background:var(--card);border-radius:22px;overflow:hidden;margin-bottom:14px}
 .field{display:flex;align-items:center;gap:12px;padding:0 16px;min-height:52px;position:relative}
 .field+.field::before{content:"";position:absolute;top:0;left:16px;right:0;border-top:.5px solid var(--line)}
@@ -561,12 +570,32 @@ const dayLabel = s => {
   if (s === t) return 'Bugün'; if (s === ys) return 'Dün';
   return parseD(s).toLocaleDateString('tr-TR', {day:'numeric', month:'long', weekday:'long'});
 };
-const parseAmount = s => {
-  s = String(s).trim().replace(/[₺\s]/g, '');
+const parseNum = s => {
   if (!s) return NaN;
   if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
   else if (/\.\d{3}(\.|$)/.test(s)) s = s.replace(/\./g, '');
   return Math.round(parseFloat(s) * 100) / 100;
+};
+// "120+45×2" style sums from the amount keypad: × ÷ before + −, a leading minus is a negative amount
+const hasOp = s => /[+×÷*/x]|.-/.test(String(s).trim());
+function calcAmount(s) {
+  s = s.replace(/[×x*]/g, '*').replace(/[÷/]/g, '/').replace(/−/g, '-').replace(/[+\-*/]+$/, '');
+  const parts = s.split(/([+\-*/])/).filter(x => x !== '');
+  if (parts[0] === '-') parts.splice(0, 2, '-' + (parts[1] ?? ''));
+  const terms = []; let op = '+', cur = null;
+  for (let i = 0; i < parts.length; i += 2) {
+    const n = parseNum(parts[i]), nx = parts[i + 1];
+    if (isNaN(n)) return NaN;
+    cur = cur === null ? n : op === '*' ? cur * n : cur / n;
+    if (nx === '*' || nx === '/') { op = nx; continue; }
+    terms.push(cur); cur = null; if (nx === '-') { const k = parts[i + 2]; if (k == null) break; parts[i + 2] = '-' + k; }
+  }
+  const r = terms.reduce((a, b) => a + b, 0);
+  return isFinite(r) ? Math.round(r * 100) / 100 : NaN;
+}
+const parseAmount = s => {
+  s = String(s).trim().replace(/[₺\s]/g, '');
+  return hasOp(s) ? calcAmount(s) : parseNum(s);
 };
 const PALETTE = ['#4C5BFF','#12A26B','#F5A524','#E5484D','#8E4EC6','#0EA5E9','#EC4899','#14B8A6','#F97316','#64748B','#A3A321','#6366F1'];
 // ordered so neighbours in a donut stay distinguishable
@@ -1319,10 +1348,15 @@ VIEWS.txs = () => {
   ${a ? accHero(a) : ''}
   <div class="search">${ICON.search}<input id="q" type="search" placeholder="Not, kategori veya hesap ara" value="${esc(ui.q)}" autocomplete="off"></div>
   ${(a || c || ui.noteFilter != null) ? `<div class="chips">${a ? `<button class="chip on" data-action="clear-acc">${esc(a.name)} ✕</button>` : ''}${c ? `<button class="chip on" data-action="clear-cat">${esc(c.name)}${c.link ? ' · gelir + gider' : ''} ✕</button>` : ''}${ui.noteFilter != null ? `<button class="chip on" data-action="clear-note">“${esc(noteName(ui.noteFilter))}” ✕</button>` : ''}</div>` : ''}
-  <div id="month-wrap">${ui.q ? '' : monthSwitch()}</div>
+  <div id="month-wrap">${monthWrap()}</div>
   ${c && !ui.q ? catCharts(c) : a && !ui.q ? accCharts(a) : ''}
   <div id="txlist"></div>`;
 };
+// a search stays inside the selected period; "Tüm dönemler" widens it to every transaction
+function monthWrap() {
+  if (!ui.q) ui.qAll = false;
+  return (ui.q && ui.qAll ? '' : monthSwitch()) + (ui.q ? `<div class="chips q-scope"><button class="chip ${ui.qAll ? 'on' : ''}" data-action="q-all">Tüm dönemler</button></div>` : '');
+}
 /* charts for one category: its last 12 periods, and how its subcategories split the selected period */
 /* notes as the level below a subcategory: "Elektrik" under Faturalar, "YouTube" under Abonelikler.
    Grouped case-insensitively, ignoring installment suffixes like "(3/12)". */
@@ -1466,7 +1500,7 @@ function renderTxList() {
   const q = ui.q.trim().toLocaleLowerCase('tr');
   let list;
   if (q) {
-    list = S.txs.filter(t => {
+    list = (ui.qAll ? S.txs : [...viewTxs(ui.month), ...upcomingIn(ui.month, viewRange(ui.month))]).filter(t => {
       const hay = [t.note, t.memo, catPath(t.categoryId), accName(t.accountId), t.toAccountId && accName(t.toAccountId), String(t.amount).replace('.', ',')].join(' ').toLocaleLowerCase('tr');
       return hay.includes(q);
     }).sort(txSort);
@@ -1776,7 +1810,7 @@ function txSheet(t) {
   const c = D.cat.get(sheetState.categoryId);
   sheetState.catParent = c ? (c.parentId && D.cat.get(c.parentId) ? c.parentId : c.id) : null;
   drawTxSheet();
-  if (!t) setTimeout(() => $('#f-amt')?.focus(), 350);
+  if (!t) setTimeout(amtFocus, 350);
 }
 /* icon picker: shown inside the current sheet; returns to the form it was opened from */
 function iconCtx() {
@@ -1869,7 +1903,7 @@ function drawTxWizard() {
   let body = '';
   if (step === 'amount') {
     body = `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>
-      <div class="amount">${d.type !== 'transfer' ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" enterkeyhint="next" placeholder="0" value="${esc(d.amount)}" autocomplete="off" aria-label="Tutar"><span>₺</span></div>`;
+      <div class="amount">${d.type !== 'transfer' ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="none" enterkeyhint="next" placeholder="0" value="${esc(d.amount)}" autocomplete="off" aria-label="Tutar"><span>₺</span></div>${keypadHTML(true)}`;
   } else if (step === 'cat') {
     const vis = x => !x.hidden || x.id === d.categoryId;
     const parents = S.categories.filter(x => x.kind === kind && !x.parentId && vis(x)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -1905,12 +1939,13 @@ function drawTxWizard() {
     ${body}
     ${last ? `<button class="primary wiz-save" data-action="save-tx">Kaydet</button>` : step === 'amount' || step === 'date' ? `<button class="primary wiz-save" data-action="wiz-next">İleri</button>` : ''}
     <button class="wiz-full" data-action="wiz-full">Tek ekranda göster</button>`);
-  if (step === 'amount') { sizeAmt(); setTimeout(() => $('#f-amt')?.focus(), 30); }
+  if (step === 'amount') { sizeAmt(); setTimeout(amtFocus, 30); }
   if (step === 'note' && !d.note) setTimeout(() => document.querySelector('#sheet [data-f="note"]')?.focus(), 30);
 }
 function wizMove(dir) {
   const d = sheetState, steps = wizSteps(d);
   if (dir > 0) { const err = wizCheck(d, steps[d.step]); if (err) return toast(err); }
+  if (steps[d.step] === 'amount' && hasOp(d.amount)) d.amount = String(parseAmount(d.amount)).replace('.', ',');
   d.step = (d.step || 0) + dir; drawTxWizard(); $('#sheet').scrollTop = 0;
 }
 function drawTxSheet() {
@@ -1929,7 +1964,8 @@ function drawTxSheet() {
     <div class="sheet-head"><button data-action="close-sheet">Vazgeç</button><h2>${d.isRule ? (d.isNew ? 'Yeni tekrar' : 'Tekrarlayan') : d.isCopy ? 'Kopya işlem' : d.isNew ? 'Yeni işlem' : 'İşlem'}</h2><button data-action="save-tx" style="font-weight:700">Kaydet</button></div>
     ${isAdj ? '' : `<div class="seg">${[['expense', 'Gider'], ['income', 'Gelir'], ['transfer', 'Transfer']].map(([k, l]) => `<button class="${d.type === k ? 'on' : ''}" data-action="tx-type" data-v="${k}">${l}</button>`).join('')}</div>`}
     ${isAdj ? '' : `<button class="tx-icon" data-action="icon-open"><span class="ic-big" style="background:${tcol}22;color:${tcol}">${ico(shown)}</span><small>${ctx.cur ? 'Özel simge' : 'Simgeyi değiştir'}</small></button>`}
-    <div class="amount">${d.type !== 'transfer' && !d.isRule ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="decimal" placeholder="0" value="${esc(d.amount)}" autocomplete="off"><span>₺</span></div>
+    <div class="amount">${d.type !== 'transfer' && !d.isRule ? `<button class="amt-sign ${String(d.amount || '').trim().startsWith('-') ? 'on' : ''}" data-action="amt-sign" aria-label="Tutarı eksi yap">±</button>` : ''}<input id="f-amt" data-f="amount" inputmode="none" placeholder="0" value="${esc(d.amount)}" autocomplete="off" aria-label="Tutar"><span>₺</span></div>
+    ${keypadHTML(d.kp ?? d.isNew)}
     <div class="form">
       <div class="field"><label>${d.type === 'transfer' ? 'Nereden' : 'Hesap'}</label><select data-f="accountId" data-redraw-tx="1">${accOptions(d.accountId)}</select></div>
       ${provOK(d) ? `<div class="field"><label>Provizyonda</label><span style="flex:1;text-align:right;color:var(--muted);font-size:var(--t-foot)">Bankada henüz görünmez</span><input type="checkbox" data-f="prov" ${provOn(d) ? 'checked' : ''}></div>` : ''}
@@ -1980,7 +2016,40 @@ function instPreview(d) {
   const parts = splitInst(total, n), [y, m, dd] = (d.date || todayStr()).split('-').map(Number);
   return `${n} × ${money(parts[0])}${parts[n - 1] !== parts[0] ? ` (son taksit ${money(parts[n - 1])})` : ''} · son taksit ${parseD(mkDate(y, m + n - 1, dd)).toLocaleDateString('tr-TR', {day:'numeric', month:'long', year:'numeric'})}`;
 }
-function sizeAmt() { const i = $('#f-amt'); if (i) i.style.width = Math.max(1, (i.value || i.placeholder).length) * 0.62 + 0.3 + 'em'; }
+// calculator keypad under the amount: always there in the wizard, in the form while the amount is being edited
+const KP = [['C', 'clr', 'Temizle'], ['÷', 'op', 'Bölü'], ['×', 'op', 'Çarpı'], ['⌫', 'del', 'Sil'], ['7'], ['8'], ['9'], ['−', 'op', 'Eksi'], ['4'], ['5'], ['6'], ['+', 'op', 'Artı'],
+  ['1'], ['2'], ['3'], ['=', 'eq', 'Hesapla'], [',', '', 'Virgül'], ['0', 'zero']];
+const keypadHTML = show => `<div class="amt-res" id="amt-res" aria-live="polite">${amtRes()}</div><div class="keypad" id="keypad" ${show ? '' : 'hidden'}>${KP.map(([k, c = '', l]) => `<button type="button" class="${c}" data-kp="${k}"${l ? ` aria-label="${l}"` : ''}>${k}</button>`).join('')}</div>`;
+function amtRes() { const v = String(sheetState?.amount || ''); if (!hasOp(v)) return ''; const r = parseAmount(v); return isNaN(r) ? '' : '= ' + money(r); }
+function kpPress(k) {
+  const d = sheetState; let v = String(d.amount || '');
+  const last = v.slice(-1), isOp = c => '+-×÷'.includes(c) && c !== '';
+  const curNum = v.split(/[+×÷]|(?<=.)-/).pop();
+  if (k === 'C') v = '';
+  else if (k === '⌫') v = v.slice(0, -1);
+  else if (k === '=') { const r = parseAmount(v); if (!isNaN(r)) v = String(r).replace('.', ','); }
+  else if (k === ',') { if (!curNum.includes(',')) v += (curNum === '' || curNum === '-' ? '0,' : ','); }
+  else if ('+−×÷'.includes(k)) {
+    const o = k === '−' ? '-' : k;
+    if (!v) { if (o === '-') v = '-'; }
+    else if (v === '-') { if (o !== '-') v = ''; }
+    else if (isOp(last) || last === ',') v = v.replace(/[+\-×÷,]$/, '') + o;
+    else v += o;
+  } else { if (/,\d\d$/.test(curNum)) return; v = (curNum === '0' ? v.slice(0, -1) : v) + k; }
+  d.amount = v; amtSync();
+}
+// keeps the amount input, its ± button, the live result and the installment note in step with d.amount
+function amtSync() {
+  const d = sheetState, i = $('#f-amt'); if (!i) return;
+  if (i.value !== d.amount) i.value = d.amount;
+  sizeAmt(); document.querySelector('.amt-sign')?.classList.toggle('on', String(d.amount).trim().startsWith('-'));
+  const r = $('#amt-res'); if (r) r.textContent = amtRes();
+  if (+d.instN > 1 && !d.isRule) { const n = document.querySelector('#sheet p.note'); if (n) n.textContent = (d.isNew ? 'Toplam tutarı gir. ' : 'Bu tutar toplam kabul edilir ve taksitlere bölünür. ') + instPreview(d); }
+}
+// a physical keyboard can type straight into the amount; on touch screens the keypad is the keyboard
+const amtFocus = () => { if (!matchMedia('(pointer:coarse)').matches) $('#f-amt')?.focus({preventScroll:true}); };
+const kpShow = on => { const k = $('#keypad'); if (k) k.hidden = !on; if (sheetState) sheetState.kp = on; };
+function sizeAmt() { const i = $('#f-amt'); if (!i) return; const n = (i.value || i.placeholder).length; i.style.fontSize = n > 12 ? '1.7rem' : n > 9 ? '2.1rem' : ''; i.style.width = Math.max(1, n) * 0.62 + 0.3 + 'em'; }
 
 function accSheet(a) {
   sheetState = a ? {...a, isNew:false, isAcc:true} : {isAcc:true, icon:null, id:uid(), name:'', type:'bank', parentId:null, opening:0, limit:null, color:PALETTE[S.accounts.length % PALETTE.length], hidden:false, order:S.accounts.length, isNew:true};
@@ -2254,6 +2323,7 @@ const A = {
   'backup-later'() { S.meta.backupSnooze = Date.now(); save(); render(); },
   async 'ask-persist'() { const ok = await askPersist(); toast(ok ? 'Kalıcı depolama açıldı' : 'Tarayıcı izin vermedi; uygulamayı ana ekrandan açınca tekrar dene'); fillStorageInfo(); },
   'clear-note'() { ui.noteFilter = null; render(); },
+  'q-all'() { ui.qAll = !ui.qAll; $('#month-wrap').innerHTML = monthWrap(); renderTxList(); },
   'drill-txs'(el, e) { e?.preventDefault(); drillTo(() => { ui.catFilter = null; ui.noteFilter = null; ui.accFilter = null; ui.q = ''; ui.tab = 'txs'; }); },
   'nav-back'() { if (!ui.stack.length) return; try { history.back(); } catch { goBack(); } },
   'add-loan'() { if (!S.accounts.length) return toast('Önce bir hesap ekle'); loanSheet(); },
@@ -2329,7 +2399,7 @@ const A = {
   'amt-sign'(el) {
     const d = sheetState, v = String(d.amount || '').trim();
     d.amount = v.startsWith('-') ? v.slice(1) : '-' + v;
-    const i = $('#f-amt'); i.value = d.amount; el.classList.toggle('on', d.amount.startsWith('-')); sizeAmt(); i.focus();
+    amtSync(); amtFocus();
   },
   'pick-cat'(el) { sheetState.categoryId = el.dataset.id; drawTxSheet(); },
   'save-tx'() {
@@ -2462,19 +2532,27 @@ const A = {
   'start-fresh'() { seedDefaults(); save(); ui.tab = 'home'; render(); toast('Hesaplar ve kategoriler hazır, Ayarlar\'dan düzenleyebilirsin'); },
   'wipe'() { if (!confirm('Tüm hesaplar, kategoriler ve işlemler bu cihazdan kalıcı olarak silinecek. Önce yedek almanı öneririm. Devam edilsin mi?')) return; S = emptyState(); save(); ui.tab = 'home'; render(); toast('Tüm veriler silindi'); }
 };
+document.addEventListener('pointerdown', e => { if (e.target.closest('[data-kp]')) e.preventDefault(); });
 document.addEventListener('click', e => {
+  const kp = e.target.closest('[data-kp]'); if (kp && sheetState) { kpPress(kp.dataset.kp); return; }
+  if (e.target.id === 'f-amt') kpShow(true);
   const el = e.target.closest('[data-action]'); if (!el) return;
   const f = A[el.dataset.action]; if (f) { if (el.tagName === 'A') e.preventDefault(); f(el, e); }
+});
+document.addEventListener('focusin', e => {
+  const t = e.target; if (!sheetState || !t.closest?.('#sheet')) return;
+  if (t.id === 'f-amt') kpShow(true);
+  else if (t.matches('input, select, textarea') && !wizOn(sheetState)) kpShow(false);
 });
 document.addEventListener('input', e => {
   const el = e.target;
   if (el.id === 'emoji-q' && sheetState) { sheetState.emojiQ = el.value; $('#emoji-results').innerHTML = emojiResults(); return; }
   if (el.id === 'note-q') { const q = el.value.trim().toLocaleLowerCase('tr'); document.querySelectorAll('#note-list .row').forEach(r => { r.style.display = r.dataset.name.includes(q) ? '' : 'none'; }); return; }
   if (el.id === 'crop-zoom' && sheetState?.crop) { cropZoomTo(sheetState.crop, +el.value); cropPaint(); return; }
-  if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = ui.q ? '' : monthSwitch(); renderTxList(); return; }
+  if (el.id === 'q') { ui.q = el.value; $('#month-wrap').innerHTML = monthWrap(); renderTxList(); return; }
   if (!sheetState) return;
   if (el.dataset.f) { sheetState[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }
-  if (el.id === 'f-amt') { sizeAmt(); document.querySelector('.amt-sign')?.classList.toggle('on', el.value.trim().startsWith('-')); }
+  if (el.id === 'f-amt') { amtSync(); return; }
   if (el.dataset.f === 'note' && $('#note-sugs')) $('#note-sugs').innerHTML = noteSugHTML(sheetState);
   if (el.id === 'f-amt' && +sheetState.instN > 1 && !sheetState.isRule) { const n = document.querySelector('#sheet p.note'); if (n) n.textContent = (sheetState.isNew ? 'Toplam tutarı gir. ' : 'Bu tutar toplam kabul edilir ve taksitlere bölünür. ') + instPreview(sheetState); }
   if (sheetState.isLoan && $('#loan-sum')) $('#loan-sum').innerHTML = loanSummary(sheetState);
